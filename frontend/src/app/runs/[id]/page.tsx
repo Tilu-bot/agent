@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
 import { api, Run, Task, AgentEvent, Artifact } from "@/lib/api";
 import styles from "./run.module.css";
@@ -129,8 +129,8 @@ function ArtifactRow({
   );
 }
 
-export default function RunPage({ params }: { params: { id: string } }) {
-  const runId = params.id;
+export default function RunPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: runId } = use(params);
   const [run, setRun] = useState<Run | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
