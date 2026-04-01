@@ -1,0 +1,35 @@
+models:
+  fast: "llama3.2:3b"
+  reasoning: "llama3.2:3b"
+  code: "qwen2.5-coder:3b"
+  embedding: "nomic-embed-text"
+
+ollama:
+  base_url: "http://localhost:11434"
+
+tools:
+  filesystem:
+    allow_write: false  # set to true to enable gated writes
+    allowed_paths:
+      - ".agentic/workspace"
+  web:
+    timeout_seconds: 30
+    max_bytes: 524288  # 512KB
+  shell:
+    enabled: true
+    docker_image: "agentic-sandbox:latest"
+    timeout_seconds: 30
+    memory_limit: "256m"
+    cpu_quota: 50000  # 50% CPU
+
+artifacts:
+  dir: ".agentic/artifacts"
+
+database:
+  url: "sqlite+aiosqlite:///.agentic/agentic.db"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
