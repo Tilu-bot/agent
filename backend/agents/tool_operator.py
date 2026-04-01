@@ -1,25 +1,33 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any
 
 from backend.llm.router import ModelRouter, TaskType
-from backend.models.db import EventKind, Task, TaskStatus
+from backend.models.db import Task
 from backend.tools.bus import ToolBus, ToolInput
+
+_MAX_RETRIES = 3
 
 
 class ToolOperator:
-    """Executes tool calls, normalises outputs, and logs them."""
+    """Executes tool calls using a ReAct retry loop.
 
-    SYSTEM_PROMPT = (
+    On a tool failure or unparseable LLM response the error is fed back into
+    the conversation so the model can self-correct.  Up to ``_MAX_RETRIES``
+    attempts are made before the task is marked failed.
+    """
+
+    _SYSTEM_PROMPT = (
         "You are a tool operator agent. Given a task, decide which tool to call "
         "and what parameters to pass.\n"
-        "Available tools: filesystem.read, filesystem.write, web.fetch, shell.exec\n"
+        "Available tools: filesystem.read, filesystem.write, web.fetch, "
+        "web.search, shell.exec\n"
         "Return ONLY valid JSON:\n"
         '{"tool": "<tool_name>", "params": { ... }}\n'
         "Or if no tool is needed:\n"
-        '{"tool": null, "result": "<direct answer>"}'
+        '{"tool": null, "result": "<direct answer>"}\n'
+        "If a previous attempt failed, learn from the error and try a different approach."
     )
 
     def __init__(self, router: ModelRouter, tool_bus: ToolBus):
@@ -29,8 +37,8 @@ class ToolOperator:
     async def execute_task(
         self, task: Task, context: str = ""
     ) -> dict[str, Any]:
-        messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": self._SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": (
@@ -40,27 +48,56 @@ class ToolOperator:
                 ),
             },
         ]
-        raw = await self._router.chat(TaskType.fast, messages)
-        tool_call = self._parse_tool_call(raw)
 
-        if tool_call.get("tool") is None:
-            return {
-                "kind": "direct",
-                "result": tool_call.get("result", raw),
-                "tool_call": None,
-                "tool_result": None,
-            }
+        last_error: str = ""
+        for attempt in range(1, _MAX_RETRIES + 1):
+            raw = await self._router.chat(TaskType.fast, messages)
+            tool_call = self._parse_tool_call(raw)
 
-        tool_input = ToolInput(
-            tool_name=tool_call["tool"],
-            params=tool_call.get("params", {}),
-        )
-        tool_result = await self._bus.call(tool_input)
+            if tool_call.get("tool") is None:
+                return {
+                    "kind": "direct",
+                    "result": tool_call.get("result", raw),
+                    "tool_call": None,
+                    "tool_result": None,
+                    "attempts": attempt,
+                }
+
+            tool_input = ToolInput(
+                tool_name=tool_call["tool"],
+                params=tool_call.get("params", {}),
+            )
+            tool_result = await self._bus.call(tool_input)
+
+            if tool_result.success:
+                return {
+                    "kind": "tool",
+                    "result": tool_result.output,
+                    "tool_call": tool_call,
+                    "tool_result": tool_result.to_dict(),
+                    "attempts": attempt,
+                }
+
+            # Tool failed — feed the error back so the model can retry
+            last_error = tool_result.error or "unknown error"
+            if attempt < _MAX_RETRIES:
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"That tool call failed (attempt {attempt}/{_MAX_RETRIES}): "
+                        f"{last_error}\n"
+                        "Please try a different tool or different parameters."
+                    ),
+                })
+
+        # All retries exhausted
         return {
             "kind": "tool",
-            "result": tool_result.output if tool_result.success else tool_result.error,
+            "result": last_error,
             "tool_call": tool_call,
             "tool_result": tool_result.to_dict(),
+            "attempts": _MAX_RETRIES,
         }
 
     def _parse_tool_call(self, raw: str) -> dict[str, Any]:

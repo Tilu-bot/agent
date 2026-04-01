@@ -135,6 +135,10 @@ class Orchestrator:
 
             task.result = str(outcome.get("result", ""))
             task.status = TaskStatus.completed
+
+            # Store plain-text results (direct LLM answers) as text artifacts
+            if outcome.get("kind") == "direct" and task.result:
+                await self._store_text_artifact(run.id, task.id, task.result)
         except Exception as exc:
             task.status = TaskStatus.failed
             task.result = str(exc)
@@ -163,6 +167,31 @@ class Orchestrator:
             data=data,
         )
         self._session.add(event)
+        await self._session.commit()
+
+    async def _store_text_artifact(
+        self, run_id: str, task_id: str, text: str
+    ) -> None:
+        cfg = self._cfg
+        artifact_dir = Path(cfg.artifacts.dir)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        sha = hashlib.sha256(text.encode()).hexdigest()
+        file_name = f"{sha[:16]}.txt"
+        file_path = artifact_dir / file_name
+        file_path.write_text(text)
+
+        artifact = Artifact(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            task_id=task_id,
+            name=file_name,
+            content_type="text/plain",
+            file_path=str(file_path),
+            sha256=sha,
+            provenance={"kind": "llm_result"},
+        )
+        self._session.add(artifact)
         await self._session.commit()
 
     async def _store_artifact(

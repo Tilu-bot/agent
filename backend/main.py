@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.runs import router as runs_router
 from backend.config import get_config
 from backend.models.database import init_db
+
+_UNPROTECTED_PATHS = {"/api/health"}
 
 
 @asynccontextmanager
@@ -27,6 +30,22 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Optional API-key authentication ───────────────────────────────────────
+    # Set AGENTIC_API_KEY in the environment to enable.  When unset every
+    # request is allowed (useful for local-only deployments).
+    @app.middleware("http")
+    async def api_key_middleware(request: Request, call_next) -> Response:
+        required_key = os.environ.get("AGENTIC_API_KEY", "")
+        if required_key and request.url.path not in _UNPROTECTED_PATHS:
+            provided = request.headers.get("X-API-Key", "")
+            if provided != required_key:
+                return Response(
+                    content='{"detail":"Invalid or missing X-API-Key header"}',
+                    status_code=401,
+                    media_type="application/json",
+                )
+        return await call_next(request)
 
     app.include_router(runs_router)
 

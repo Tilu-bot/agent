@@ -182,8 +182,17 @@ async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.get("", response_model=list[RunResponse])
-async def list_runs(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Run).order_by(Run.created_at.desc()))
+async def list_runs(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """List runs with optional pagination via ``?limit=`` and ``?offset=``."""
+    limit = max(1, min(limit, 200))   # clamp: 1 – 200
+    offset = max(0, offset)
+    result = await db.execute(
+        select(Run).order_by(Run.created_at.desc()).limit(limit).offset(offset)
+    )
     runs = result.scalars().all()
     return [RunResponse.from_orm(r) for r in runs]
 

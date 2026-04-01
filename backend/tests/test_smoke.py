@@ -40,6 +40,7 @@ def test_tool_bus_registers_default_tools():
     assert "filesystem.read" in tools
     assert "filesystem.write" in tools
     assert "web.fetch" in tools
+    assert "web.search" in tools
     assert "shell.exec" in tools
 
 
@@ -322,3 +323,250 @@ def test_topological_sort_cycle_safety():
     t2 = make("t2", ["t1"])
     result = Orchestrator._topological_sort([t1, t2])
     assert len(result) == 2   # all tasks returned, no hang
+
+
+# ── New tests for 10/10 upgrades ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_web_fetch_extracts_text(tmp_path, monkeypatch):
+    """web.fetch should return extracted text, not raw HTML."""
+    import httpx
+    from backend.tools.web import WebFetchTool
+
+    html = (
+        "<html><body>"
+        "<nav>nav junk</nav>"
+        "<article><p>Hello clean world!</p></article>"
+        "<footer>footer junk</footer>"
+        "</body></html>"
+    )
+
+    # Patch httpx to avoid real network calls
+    class FakeResp:
+        status_code = 200
+        text = html
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+        async def get(self, *a, **kw):
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: FakeClient())
+
+    tool = WebFetchTool()
+    result = await tool.execute({"url": "https://example.com"})
+    assert result.success
+    content = result.output["content"]
+    assert result.output["extraction"] == "text"
+    # The extracted text should be much shorter than raw HTML
+    assert len(content) < len(html) or "Hello clean world" in content
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_raw_mode(tmp_path, monkeypatch):
+    """web.fetch with raw=true should return full HTML."""
+    import httpx
+    from backend.tools.web import WebFetchTool
+
+    html = "<html><body><p>raw</p></body></html>"
+
+    class FakeResp:
+        status_code = 200
+        text = html
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            pass
+        async def get(self, *a, **kw):
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: FakeClient())
+
+    tool = WebFetchTool()
+    result = await tool.execute({"url": "https://example.com", "raw": "true"})
+    assert result.success
+    assert result.output["extraction"] == "raw"
+    assert "<html>" in result.output["content"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_tool_registered():
+    """web.search must be in the default tool bus."""
+    from backend.tools import create_default_tool_bus
+
+    bus = create_default_tool_bus()
+    assert "web.search" in bus.list_tools()
+
+
+@pytest.mark.asyncio
+async def test_web_search_missing_query():
+    """web.search returns an error when query is missing."""
+    from backend.tools.web import WebSearchTool
+
+    tool = WebSearchTool()
+    result = await tool.execute({})
+    assert not result.success
+    assert "query" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_tool_operator_react_retry(tmp_path, monkeypatch):
+    """ToolOperator retries up to MAX_RETRIES on tool failure."""
+    from backend.agents.tool_operator import ToolOperator, _MAX_RETRIES
+    from backend.llm.router import ModelRouter, TaskType
+    from backend.models.db import Task
+    from backend.tools.bus import ToolBus, ToolResult
+
+    call_count = 0
+
+    # Router always returns a call to a fictional tool
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"tool": "fake.tool", "params": {}}'
+
+    # Tool always fails
+    class FailingBus(ToolBus):
+        async def call(self, tool_input):
+            nonlocal call_count
+            call_count += 1
+            return ToolResult.from_error("fake.tool", "always fails")
+
+    bus = FailingBus()
+
+    task = Task()
+    task.title = "Test task"
+    task.description = ""
+    task.depends_on = []
+
+    op = ToolOperator(FakeRouter(), bus)
+    outcome = await op.execute_task(task, "")
+
+    # Should have retried _MAX_RETRIES times
+    assert call_count == _MAX_RETRIES
+    assert outcome["attempts"] == _MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_tool_operator_react_succeeds_on_second_attempt():
+    """ToolOperator returns on first successful tool call."""
+    from backend.agents.tool_operator import ToolOperator
+    from backend.models.db import Task
+    from backend.tools.bus import ToolBus, ToolResult
+
+    call_count = 0
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"tool": "fake.tool", "params": {}}'
+
+    class SometimesBus(ToolBus):
+        async def call(self, tool_input):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ToolResult.from_error("fake.tool", "first failure")
+            return ToolResult.from_success("fake.tool", {"data": "ok"})
+
+    task = Task()
+    task.title = "Test task"
+    task.description = ""
+    task.depends_on = []
+
+    op = ToolOperator(FakeRouter(), SometimesBus())
+    outcome = await op.execute_task(task, "")
+
+    assert call_count == 2
+    assert outcome["attempts"] == 2
+    assert outcome["kind"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_list_runs_pagination(tmp_path):
+    """GET /api/runs respects limit and offset query params."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create 5 runs
+        for i in range(5):
+            await client.post("/api/runs", json={"goal": f"Goal {i}"})
+
+        # Default (no params) returns all 5
+        r_all = await client.get("/api/runs")
+        assert r_all.status_code == 200
+        assert len(r_all.json()) == 5
+
+        # limit=2 returns 2
+        r_limited = await client.get("/api/runs?limit=2")
+        assert len(r_limited.json()) == 2
+
+        # limit=2&offset=4 returns the last 1
+        r_paged = await client.get("/api/runs?limit=2&offset=4")
+        assert len(r_paged.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_blocks_when_set(tmp_path, monkeypatch):
+    """When AGENTIC_API_KEY is set, requests without the header get 401."""
+    import os
+    os.chdir(tmp_path)
+    monkeypatch.setenv("AGENTIC_API_KEY", "secret-key")
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.models.database import init_db
+
+    await init_db()
+
+    # Import AFTER setting env var so middleware picks it up
+    import importlib, backend.main as main_mod
+    importlib.reload(main_mod)
+    app = main_mod.create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # No key → 401
+        r = await client.get("/api/runs")
+        assert r.status_code == 401
+
+        # Wrong key → 401
+        r2 = await client.get("/api/runs", headers={"X-API-Key": "wrong"})
+        assert r2.status_code == 401
+
+        # Correct key → 200
+        r3 = await client.get("/api/runs", headers={"X-API-Key": "secret-key"})
+        assert r3.status_code == 200
+
+        # /api/health is always accessible
+        r4 = await client.get("/api/health")
+        assert r4.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_api_key_auth_open_when_not_set(tmp_path, monkeypatch):
+    """When AGENTIC_API_KEY is not set, all requests pass through."""
+    import os
+    os.chdir(tmp_path)
+    monkeypatch.delenv("AGENTIC_API_KEY", raising=False)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.models.database import init_db
+    import importlib, backend.main as main_mod
+    importlib.reload(main_mod)
+    app = main_mod.create_app()
+
+    await init_db()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/runs")
+        assert r.status_code == 200
