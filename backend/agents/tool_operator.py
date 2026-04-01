@@ -50,6 +50,8 @@ class ToolOperator:
         ]
 
         last_error: str = ""
+        tool_call: dict[str, Any] = {}
+        tool_result = None
         for attempt in range(1, _MAX_RETRIES + 1):
             raw = await self._router.chat(TaskType.fast, messages)
             tool_call = self._parse_tool_call(raw)
@@ -96,7 +98,7 @@ class ToolOperator:
             "kind": "tool",
             "result": last_error,
             "tool_call": tool_call,
-            "tool_result": tool_result.to_dict(),
+            "tool_result": tool_result.to_dict() if tool_result is not None else None,
             "attempts": _MAX_RETRIES,
         }
 

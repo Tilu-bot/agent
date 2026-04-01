@@ -34,6 +34,12 @@ class Orchestrator:
 
     async def run(self, run: Run) -> None:
         """Execute the full run lifecycle."""
+        # Re-read the run from DB before touching it — a cancel request may have
+        # already set status = cancelled between task creation and first execution.
+        await self._session.refresh(run)
+        if run.status in _TERMINAL:
+            return
+
         run.status = RunStatus.running
         self._session.add(run)
         await self._session.commit()
