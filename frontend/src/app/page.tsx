@@ -77,7 +77,7 @@ export default function HomePage() {
         <section className={styles.createSection}>
           <form onSubmit={handleCreate} className={styles.createForm}>
             <textarea
-              placeholder="Describe your goal… e.g. 'Research the latest news about AI and summarise it'"
+              placeholder="Describe your goal… e.g. 'Research the latest news about AI and summarize it'"
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
               rows={3}
