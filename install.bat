@@ -1,132 +1,230 @@
 @echo off
 setlocal enabledelayedexpansion
-title Agentic — Installer
+title Agentic - Setup (installing everything automatically...)
 
 echo.
 echo  =====================================================
-echo   Agentic  ^|  One-Click Installer
+echo   Agentic  ^|  Automatic Setup
+echo   Everything will be downloaded and installed now.
 echo  =====================================================
 echo.
 
-:: ── 1. Check Python ────────────────────────────────────────────────────────
+:: ── Require Administrator (needed to install software) ─────────────────────
+net session >nul 2>&1
+if errorlevel 1 (
+    echo  [!] Requesting administrator access to install software...
+    echo.
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+
+:: ── Helper: check winget ───────────────────────────────────────────────────
+winget --version >nul 2>&1
+set WINGET_OK=0
+if not errorlevel 1 set WINGET_OK=1
+
+:: ════════════════════════════════════════════════════════════════════════════
+:: 1. PYTHON
+:: ════════════════════════════════════════════════════════════════════════════
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Python not found.
-    echo         Download from https://www.python.org/downloads/
-    echo         Make sure to check "Add to PATH" during install.
-    pause & exit /b 1
+    echo  [>>] Python not found - installing automatically...
+    if "%WINGET_OK%"=="1" (
+        winget install --id Python.Python.3.11 -e --silent --accept-package-agreements --accept-source-agreements
+    ) else (
+        echo      Downloading Python installer...
+        powershell -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe' -OutFile '%TEMP%\python-installer.exe'"
+        "%TEMP%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
+        del "%TEMP%\python-installer.exe" >nul 2>&1
+    )
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    python --version >nul 2>&1
+    if errorlevel 1 (
+        echo  [ERROR] Python install failed. Please restart this script and try again.
+        pause & exit /b 1
+    )
+    echo  [OK] Python installed.
+) else (
+    for /f "tokens=2" %%v in ('python --version 2^>^&1') do echo  [OK] Python %%v already installed.
 )
-for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PY_VER=%%v
-echo [OK] Python %PY_VER%
 
-:: ── 2. Check Node.js ───────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════════════════════
+:: 2. NODE.JS
+:: ════════════════════════════════════════════════════════════════════════════
 node --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js not found.
-    echo         Download from https://nodejs.org/
-    pause & exit /b 1
-)
-for /f %%v in ('node --version 2^>^&1') do set NODE_VER=%%v
-echo [OK] Node.js %NODE_VER%
-
-:: ── 3. Check Docker ────────────────────────────────────────────────────────
-docker --version >nul 2>&1
-if errorlevel 1 (
-    echo [WARN] Docker not found — shell.exec tool will be disabled.
-    echo        Install Docker Desktop from https://www.docker.com/products/docker-desktop/
-    set DOCKER_OK=0
+    echo  [>>] Node.js not found - installing automatically...
+    if "%WINGET_OK%"=="1" (
+        winget install --id OpenJS.NodeJS.LTS -e --silent --accept-package-agreements --accept-source-agreements
+    ) else (
+        echo      Downloading Node.js installer...
+        powershell -Command "Invoke-WebRequest -Uri 'https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi' -OutFile '%TEMP%\nodejs-installer.msi'"
+        msiexec /i "%TEMP%\nodejs-installer.msi" /qn ADDLOCAL=ALL
+        del "%TEMP%\nodejs-installer.msi" >nul 2>&1
+    )
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    node --version >nul 2>&1
+    if errorlevel 1 (
+        echo  [ERROR] Node.js install failed. Please restart this script and try again.
+        pause & exit /b 1
+    )
+    echo  [OK] Node.js installed.
 ) else (
-    for /f "tokens=1-3" %%a in ('docker --version 2^>^&1') do set DOCKER_VER=%%a %%b %%c
-    echo [OK] %DOCKER_VER%
-    set DOCKER_OK=1
+    for /f %%v in ('node --version 2^>^&1') do echo  [OK] Node.js %%v already installed.
 )
 
-:: ── 4. Check Ollama ────────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════════════════════
+:: 3. OLLAMA
+:: ════════════════════════════════════════════════════════════════════════════
 ollama --version >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Ollama not found.
-    echo         Download from https://ollama.com/download  (free, runs locally)
-    echo         After install, re-run this script.
-    pause & exit /b 1
-)
-for /f "tokens=1-2" %%a in ('ollama --version 2^>^&1') do set OLLAMA_VER=%%a %%b
-echo [OK] Ollama %OLLAMA_VER%
-
-echo.
-echo  --- Setting up Python backend ---
-echo.
-
-:: ── 5. Create Python venv ──────────────────────────────────────────────────
-if not exist "backend\.venv" (
-    echo Creating virtual environment...
-    python -m venv backend\.venv
-    if errorlevel 1 ( echo [ERROR] Failed to create venv. & pause & exit /b 1 )
-    echo [OK] Virtual environment created.
+    echo  [>>] Ollama not found - installing automatically...
+    if "%WINGET_OK%"=="1" (
+        winget install --id Ollama.Ollama -e --silent --accept-package-agreements --accept-source-agreements
+    ) else (
+        echo      Downloading Ollama installer...
+        powershell -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '%TEMP%\OllamaSetup.exe'"
+        "%TEMP%\OllamaSetup.exe" /S
+        del "%TEMP%\OllamaSetup.exe" >nul 2>&1
+    )
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    ollama --version >nul 2>&1
+    if errorlevel 1 (
+        echo  [ERROR] Ollama install failed. Please restart this script and try again.
+        pause & exit /b 1
+    )
+    echo  [OK] Ollama installed.
 ) else (
-    echo [OK] Virtual environment already exists.
+    for /f "tokens=1-2" %%a in ('ollama --version 2^>^&1') do echo  [OK] Ollama %%a %%b already installed.
 )
 
-:: ── 6. Install Python deps ─────────────────────────────────────────────────
-echo Installing Python dependencies...
+:: ════════════════════════════════════════════════════════════════════════════
+:: 4. DOCKER DESKTOP  (optional - only needed for shell.exec tool)
+:: ════════════════════════════════════════════════════════════════════════════
+docker --version >nul 2>&1
+set DOCKER_OK=0
+if errorlevel 1 (
+    echo  [>>] Docker Desktop not found - installing automatically...
+    echo      (Enables the secure code-execution sandbox.)
+    if "%WINGET_OK%"=="1" (
+        winget install --id Docker.DockerDesktop -e --silent --accept-package-agreements --accept-source-agreements
+    ) else (
+        echo      Downloading Docker Desktop installer...
+        powershell -Command "Invoke-WebRequest -Uri 'https://desktop.docker.com/win/main/amd64/Docker%%20Desktop%%20Installer.exe' -OutFile '%TEMP%\DockerInstaller.exe'"
+        "%TEMP%\DockerInstaller.exe" install --quiet --accept-license
+        del "%TEMP%\DockerInstaller.exe" >nul 2>&1
+    )
+    docker --version >nul 2>&1
+    if not errorlevel 1 set DOCKER_OK=1
+    if "%DOCKER_OK%"=="0" echo  [WARN] Docker needs a reboot to finish - sandbox will be enabled after restart.
+) else (
+    set DOCKER_OK=1
+    for /f "tokens=1-3" %%a in ('docker --version 2^>^&1') do echo  [OK] Docker %%a %%b %%c already installed.
+)
+
+echo.
+echo  ---  Setting up Python backend  ---
+echo.
+
+:: ════════════════════════════════════════════════════════════════════════════
+:: 5. PYTHON VIRTUAL ENVIRONMENT + DEPENDENCIES
+:: ════════════════════════════════════════════════════════════════════════════
+if not exist "backend\.venv" (
+    echo  Creating Python environment...
+    python -m venv backend\.venv
+    if errorlevel 1 ( echo  [ERROR] Could not create Python environment. & pause & exit /b 1 )
+) else (
+    echo  [OK] Python environment already exists.
+)
+echo  Installing Python packages (may take ~1 min on first run)...
 backend\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
 backend\.venv\Scripts\pip.exe install -r backend\requirements.txt --quiet
-if errorlevel 1 ( echo [ERROR] pip install failed. & pause & exit /b 1 )
-echo [OK] Python dependencies installed.
+if errorlevel 1 ( echo  [ERROR] Package install failed. & pause & exit /b 1 )
+echo  [OK] Python packages installed.
 
 echo.
-echo  --- Setting up Node.js frontend ---
+echo  ---  Setting up web frontend  ---
 echo.
 
-:: ── 7. Install Node deps ───────────────────────────────────────────────────
-echo Installing Node.js dependencies...
+:: ════════════════════════════════════════════════════════════════════════════
+:: 6. NODE.JS FRONTEND DEPENDENCIES
+:: ════════════════════════════════════════════════════════════════════════════
+echo  Installing web packages (may take ~1 min on first run)...
 cd frontend
 call npm install --silent
-if errorlevel 1 ( cd .. & echo [ERROR] npm install failed. & pause & exit /b 1 )
+if errorlevel 1 ( cd .. & echo  [ERROR] npm install failed. & pause & exit /b 1 )
 cd ..
-echo [OK] Node.js dependencies installed.
+echo  [OK] Web packages installed.
 
 echo.
-echo  --- Building Docker sandbox image ---
+echo  ---  Building Docker sandbox  ---
 echo.
 
-:: ── 8. Build sandbox ──────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════════════════════
+:: 7. BUILD DOCKER SANDBOX
+:: ════════════════════════════════════════════════════════════════════════════
 if "%DOCKER_OK%"=="1" (
-    echo Building agentic-sandbox Docker image (first run only)...
-    docker build -t agentic-sandbox:latest ./sandbox -q
+    docker info >nul 2>&1
     if errorlevel 1 (
-        echo [WARN] Sandbox build failed — shell.exec will not work.
+        echo  [WARN] Docker installed but not running yet.
+        echo         Start Docker Desktop once, then re-run this installer to finish.
     ) else (
-        echo [OK] agentic-sandbox:latest built.
+        echo  Building sandbox image...
+        docker build -t agentic-sandbox:latest ./sandbox -q
+        if not errorlevel 1 echo  [OK] Sandbox image built.
     )
 ) else (
-    echo [SKIP] Docker not available — skipping sandbox build.
+    echo  [SKIP] Docker not available - sandbox skipped.
 )
 
 echo.
-echo  --- Pulling Ollama models ---
+echo  ---  Downloading AI models (one-time, ~4 GB total)  ---
 echo.
 
-:: ── 9. Pull models (start Ollama serve in background if needed) ────────────
+:: ════════════════════════════════════════════════════════════════════════════
+:: 8. START OLLAMA + PULL MODELS
+:: ════════════════════════════════════════════════════════════════════════════
 ollama list >nul 2>&1
 if errorlevel 1 (
-    echo Starting Ollama server...
+    echo  Starting Ollama service...
     start /B ollama serve
     timeout /t 5 /nobreak >nul
 )
-
-echo Pulling llama3.2:3b  (this may take a few minutes on first run)...
+echo  Downloading llama3.2:3b  (main model, ~2 GB) ...
 ollama pull llama3.2:3b
-echo Pulling qwen2.5-coder:3b...
+echo  Downloading qwen2.5-coder:3b  (code model, ~2 GB) ...
 ollama pull qwen2.5-coder:3b
-echo Pulling nomic-embed-text...
+echo  Downloading nomic-embed-text  (tiny embedding model) ...
 ollama pull nomic-embed-text
-echo [OK] Models ready.
+echo  [OK] All AI models downloaded.
+
+echo.
+echo  ---  Creating desktop shortcut  ---
+echo.
+
+:: ════════════════════════════════════════════════════════════════════════════
+:: 9. DESKTOP SHORTCUT  (so you never need to find this folder again)
+:: ════════════════════════════════════════════════════════════════════════════
+set "SHORTCUT=%USERPROFILE%\Desktop\Agentic AI.lnk"
+set "TARGET=%~dp0start.bat"
+set "WORKDIR=%~dp0"
+powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%SHORTCUT%'); $s.TargetPath = '%TARGET%'; $s.WorkingDirectory = '%WORKDIR%'; $s.Description = 'Start Agentic AI'; $s.Save()"
+if exist "%SHORTCUT%" (
+    echo  [OK] Desktop shortcut created: "Agentic AI"
+) else (
+    echo  [WARN] Could not create desktop shortcut ^(non-fatal^).
+)
 
 echo.
 echo  =====================================================
-echo   Installation complete!
 echo.
-echo   Next step:  double-click  start.bat
+echo   SETUP COMPLETE!
+echo.
+echo   To launch Agentic:
+echo     * Double-click "Agentic AI" on your Desktop
+echo       (or double-click start.bat in this folder)
+echo.
+echo   The app opens in your browser automatically.
 echo  =====================================================
 echo.
 pause
