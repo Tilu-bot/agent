@@ -18,6 +18,7 @@ class RunStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class TaskStatus(str, Enum):

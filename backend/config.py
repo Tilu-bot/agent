@@ -56,6 +56,7 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:3000"]
+    max_concurrent_runs: int = 5
 
 
 class AppConfig(BaseModel):

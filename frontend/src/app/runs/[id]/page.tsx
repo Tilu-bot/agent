@@ -22,6 +22,8 @@ const ROLE_COLOR: Record<string, string> = {
   coder: "#26c6da",
 };
 
+const ACTIVE_STATUSES = new Set(["pending", "running"]);
+
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
 }
@@ -137,7 +139,9 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [tab, setTab] = useState<"tasks" | "events" | "artifacts">("events");
   const [error, setError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
+  /** Full REST reload — used on mount and as SSE fallback. */
   const load = useCallback(async () => {
     try {
       const [r, t, e, a] = await Promise.all([
@@ -156,15 +160,82 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
   }, [runId]);
 
   useEffect(() => {
+    // Always do one full REST load first so the page is populated instantly.
     load();
-    const interval = setInterval(() => {
-      if (run?.status === "running" || run?.status === "pending") load();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [load, run?.status]);
+
+    const es = new EventSource(api.streamUrl(runId));
+
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const msg = JSON.parse(e.data as string) as {
+          type: string;
+          payload?: unknown;
+        };
+
+        if (msg.type === "run_update") {
+          setRun(msg.payload as Run);
+        } else if (msg.type === "event") {
+          const ev = msg.payload as AgentEvent;
+          setEvents((prev) =>
+            prev.find((x) => x.id === ev.id) ? prev : [...prev, ev]
+          );
+        } else if (msg.type === "task_update") {
+          const t = msg.payload as Task;
+          setTasks((prev) => {
+            const idx = prev.findIndex((x) => x.id === t.id);
+            if (idx === -1) return [...prev, t];
+            const next = [...prev];
+            next[idx] = t;
+            return next;
+          });
+        } else if (msg.type === "artifact") {
+          const a = msg.payload as Artifact;
+          setArtifacts((prev) =>
+            prev.find((x) => x.id === a.id) ? prev : [...prev, a]
+          );
+        } else if (msg.type === "done") {
+          es.close();
+          // Final REST reload to ensure consistency after stream closes.
+          load();
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      // SSE failed — fall back to 3 s polling while the run is active.
+      const interval = setInterval(() => {
+        load().then(() => {
+          setRun((r) => {
+            if (r && !ACTIVE_STATUSES.has(r.status)) clearInterval(interval);
+            return r;
+          });
+        });
+      }, 3000);
+    };
+
+    return () => es.close();
+  }, [runId, load]);
+
+  async function handleCancel() {
+    if (!run) return;
+    setCancelling(true);
+    try {
+      await api.cancelRun(run.id);
+      setRun((r) => (r ? { ...r, status: "cancelled" } : r));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   if (error) return <div className={styles.error}>{error}</div>;
   if (!run) return <div className={styles.loading}>Loading…</div>;
+
+  const isActive = ACTIVE_STATUSES.has(run.status);
 
   return (
     <div className={styles.page}>
@@ -175,6 +246,15 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
         <div className={styles.runInfo}>
           <span className={styles.runGoal}>{run.goal}</span>
           <StatusBadge status={run.status} />
+          {isActive && (
+            <button
+              className={styles.cancelBtn}
+              onClick={handleCancel}
+              disabled={cancelling}
+            >
+              {cancelling ? "Cancelling…" : "✕ Cancel"}
+            </button>
+          )}
         </div>
       </header>
 

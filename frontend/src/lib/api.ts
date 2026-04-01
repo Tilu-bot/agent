@@ -3,7 +3,7 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 export interface Run {
   id: string;
   goal: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   created_at: string;
   updated_at: string;
 }
@@ -62,10 +62,13 @@ export const api = {
     }),
   listRuns: () => apiFetch<Run[]>("/api/runs"),
   getRun: (id: string) => apiFetch<Run>(`/api/runs/${id}`),
+  cancelRun: (id: string) =>
+    fetch(`${API_BASE}/api/runs/${id}`, { method: "DELETE" }),
   getTasks: (id: string) => apiFetch<Task[]>(`/api/runs/${id}/tasks`),
   getEvents: (id: string) => apiFetch<AgentEvent[]>(`/api/runs/${id}/events`),
   getArtifacts: (id: string) => apiFetch<Artifact[]>(`/api/runs/${id}/artifacts`),
   getArtifactContent: (runId: string, artifactId: string) =>
     apiFetch<{ content: string }>(`/api/runs/${runId}/artifacts/${artifactId}/content`),
   health: () => apiFetch<{ status: string; ollama: boolean }>("/api/health"),
+  streamUrl: (id: string) => `${API_BASE}/api/runs/${id}/stream`,
 };

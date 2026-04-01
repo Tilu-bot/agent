@@ -1,24 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.orchestrator import Orchestrator
+from backend.config import get_config
 from backend.models.db import Artifact, Event, Run, RunStatus, Task
 from backend.models.database import get_session_factory
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
+# ── Concurrency limiting ───────────────────────────────────────────────────────
+_RUN_SEMAPHORE: asyncio.Semaphore | None = None
 
-def _get_session():
-    factory = get_session_factory()
-    return factory()
+def _get_semaphore() -> asyncio.Semaphore:
+    global _RUN_SEMAPHORE
+    if _RUN_SEMAPHORE is None:
+        _RUN_SEMAPHORE = asyncio.Semaphore(get_config().server.max_concurrent_runs)
+    return _RUN_SEMAPHORE
+
+
+# Track running asyncio.Tasks so we can cancel them
+_run_tasks: dict[str, asyncio.Task] = {}
+
+# Terminal statuses — stream ends when the run reaches one of these
+_TERMINAL = {RunStatus.completed, RunStatus.failed, RunStatus.cancelled}
 
 
 async def get_db() -> AsyncSession:
@@ -27,8 +41,17 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+# ── Request / response models ──────────────────────────────────────────────────
+
 class CreateRunRequest(BaseModel):
-    goal: str
+    goal: str = Field(..., min_length=1, description="Goal for the agent run")
+
+    @field_validator("goal")
+    @classmethod
+    def goal_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("goal must not be blank or whitespace")
+        return v
 
 
 class RunResponse(BaseModel):
@@ -47,48 +70,6 @@ class RunResponse(BaseModel):
             created_at=run.created_at.isoformat(),
             updated_at=run.updated_at.isoformat(),
         )
-
-
-@router.post("", response_model=RunResponse)
-async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db)):
-    from backend.tools import create_default_tool_bus
-
-    run = Run(id=str(uuid.uuid4()), goal=body.goal)
-    db.add(run)
-    await db.commit()
-    await db.refresh(run)
-
-    # Launch orchestrator in background
-    tool_bus = create_default_tool_bus()
-    run_id = run.id
-
-    async def _run_background():
-        factory = get_session_factory()
-        async with factory() as bg_session:
-            bg_run = await bg_session.get(Run, run_id)
-            if bg_run is None:
-                return
-            orch = Orchestrator(bg_session, tool_bus)
-            await orch.run(bg_run)
-
-    asyncio.create_task(_run_background())
-
-    return RunResponse.from_orm(run)
-
-
-@router.get("", response_model=list[RunResponse])
-async def list_runs(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Run).order_by(Run.created_at.desc()))
-    runs = result.scalars().all()
-    return [RunResponse.from_orm(r) for r in runs]
-
-
-@router.get("/{run_id}", response_model=RunResponse)
-async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
-    run = await db.get(Run, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return RunResponse.from_orm(run)
 
 
 class TaskResponse(BaseModel):
@@ -121,18 +102,6 @@ class TaskResponse(BaseModel):
         )
 
 
-@router.get("/{run_id}/tasks", response_model=list[TaskResponse])
-async def get_tasks(run_id: str, db: AsyncSession = Depends(get_db)):
-    run = await db.get(Run, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    result = await db.execute(
-        select(Task).where(Task.run_id == run_id).order_by(Task.created_at)
-    )
-    tasks = result.scalars().all()
-    return [TaskResponse.from_orm(t) for t in tasks]
-
-
 class EventResponse(BaseModel):
     id: str
     run_id: str
@@ -157,18 +126,6 @@ class EventResponse(BaseModel):
         )
 
 
-@router.get("/{run_id}/events", response_model=list[EventResponse])
-async def get_events(run_id: str, db: AsyncSession = Depends(get_db)):
-    run = await db.get(Run, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    result = await db.execute(
-        select(Event).where(Event.run_id == run_id).order_by(Event.created_at)
-    )
-    events = result.scalars().all()
-    return [EventResponse.from_orm(e) for e in events]
-
-
 class ArtifactResponse(BaseModel):
     id: str
     run_id: str
@@ -191,6 +148,198 @@ class ArtifactResponse(BaseModel):
             provenance=artifact.provenance,
             created_at=artifact.created_at.isoformat(),
         )
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+@router.post("", response_model=RunResponse)
+async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db)):
+    from backend.tools import create_default_tool_bus
+
+    run = Run(id=str(uuid.uuid4()), goal=body.goal)
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+
+    tool_bus = create_default_tool_bus()
+    run_id = run.id
+
+    async def _run_background():
+        async with _get_semaphore():
+            factory = get_session_factory()
+            async with factory() as bg_session:
+                bg_run = await bg_session.get(Run, run_id)
+                if bg_run is None:
+                    return
+                orch = Orchestrator(bg_session, tool_bus)
+                await orch.run(bg_run)
+
+    task = asyncio.create_task(_run_background())
+    _run_tasks[run_id] = task
+    task.add_done_callback(lambda _: _run_tasks.pop(run_id, None))
+
+    return RunResponse.from_orm(run)
+
+
+@router.get("", response_model=list[RunResponse])
+async def list_runs(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Run).order_by(Run.created_at.desc()))
+    runs = result.scalars().all()
+    return [RunResponse.from_orm(r) for r in runs]
+
+
+@router.get("/{run_id}", response_model=RunResponse)
+async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return RunResponse.from_orm(run)
+
+
+@router.delete("/{run_id}", status_code=204)
+async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Cancel a pending or running run."""
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in _TERMINAL:
+        raise HTTPException(status_code=409, detail=f"Run is already {run.status}")
+
+    run.status = RunStatus.cancelled
+    db.add(run)
+    await db.commit()
+
+    # Cancel the background asyncio.Task if it is still running
+    bg_task = _run_tasks.pop(run_id, None)
+    if bg_task and not bg_task.done():
+        bg_task.cancel()
+
+
+@router.get("/{run_id}/stream")
+async def stream_run(run_id: str):
+    """Server-Sent Events stream for a run.
+
+    Each message is a JSON object:
+    ``{"type": "run_update"|"task_update"|"artifact"|"event"|"done", "payload": {...}}``
+
+    The stream closes automatically once the run reaches a terminal state.
+    """
+    # Verify the run exists before we open the generator
+    factory = get_session_factory()
+    async with factory() as db:
+        run = await db.get(Run, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+    async def _generate():
+        sent_event_ids: set[str] = set()
+        sent_artifact_ids: set[str] = set()
+        last_run_status: str | None = None
+        # key = task_id, value = "status:result" fingerprint
+        last_task_fingerprints: dict[str, str] = {}
+
+        while True:
+            try:
+                async with factory() as db:
+                    run = await db.get(Run, run_id)
+                    if run is None:
+                        break
+
+                    # ── Run status update ──────────────────────────────────────
+                    if run.status != last_run_status:
+                        last_run_status = run.status
+                        msg = json.dumps({
+                            "type": "run_update",
+                            "payload": RunResponse.from_orm(run).model_dump(),
+                        })
+                        yield f"data: {msg}\n\n"
+
+                    # ── New events ─────────────────────────────────────────────
+                    ev_result = await db.execute(
+                        select(Event).where(Event.run_id == run_id).order_by(Event.created_at)
+                    )
+                    for event in ev_result.scalars().all():
+                        if event.id not in sent_event_ids:
+                            sent_event_ids.add(event.id)
+                            msg = json.dumps({
+                                "type": "event",
+                                "payload": EventResponse.from_orm(event).model_dump(),
+                            })
+                            yield f"data: {msg}\n\n"
+
+                    # ── Task status updates ────────────────────────────────────
+                    tk_result = await db.execute(
+                        select(Task).where(Task.run_id == run_id).order_by(Task.created_at)
+                    )
+                    for task in tk_result.scalars().all():
+                        fingerprint = f"{task.status}:{task.result}"
+                        if last_task_fingerprints.get(task.id) != fingerprint:
+                            last_task_fingerprints[task.id] = fingerprint
+                            msg = json.dumps({
+                                "type": "task_update",
+                                "payload": TaskResponse.from_orm(task).model_dump(),
+                            })
+                            yield f"data: {msg}\n\n"
+
+                    # ── New artifacts ──────────────────────────────────────────
+                    ar_result = await db.execute(
+                        select(Artifact).where(Artifact.run_id == run_id).order_by(Artifact.created_at)
+                    )
+                    for artifact in ar_result.scalars().all():
+                        if artifact.id not in sent_artifact_ids:
+                            sent_artifact_ids.add(artifact.id)
+                            msg = json.dumps({
+                                "type": "artifact",
+                                "payload": ArtifactResponse.from_orm(artifact).model_dump(),
+                            })
+                            yield f"data: {msg}\n\n"
+
+                    # ── Terminal check ─────────────────────────────────────────
+                    if run.status in _TERMINAL:
+                        yield 'data: {"type":"done"}\n\n'
+                        break
+
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                # Don't let transient DB errors kill the stream
+                pass
+
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.get("/{run_id}/tasks", response_model=list[TaskResponse])
+async def get_tasks(run_id: str, db: AsyncSession = Depends(get_db)):
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    result = await db.execute(
+        select(Task).where(Task.run_id == run_id).order_by(Task.created_at)
+    )
+    tasks = result.scalars().all()
+    return [TaskResponse.from_orm(t) for t in tasks]
+
+
+@router.get("/{run_id}/events", response_model=list[EventResponse])
+async def get_events(run_id: str, db: AsyncSession = Depends(get_db)):
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    result = await db.execute(
+        select(Event).where(Event.run_id == run_id).order_by(Event.created_at)
+    )
+    events = result.scalars().all()
+    return [EventResponse.from_orm(e) for e in events]
 
 
 @router.get("/{run_id}/artifacts", response_model=list[ArtifactResponse])

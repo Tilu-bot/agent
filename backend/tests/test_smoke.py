@@ -22,6 +22,16 @@ def test_config_loads():
     assert cfg.ollama.base_url.startswith("http")
 
 
+def test_config_max_concurrent_runs():
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.server.max_concurrent_runs == 5
+
+    custom = AppConfig.model_validate({"server": {"max_concurrent_runs": 2}})
+    assert custom.server.max_concurrent_runs == 2
+
+
 def test_tool_bus_registers_default_tools():
     from backend.tools import create_default_tool_bus
 
@@ -42,6 +52,14 @@ def test_model_router_selects_models():
     assert router.select_model(TaskType.reasoning)
     # Unknown type falls back to fast model
     assert router.select_model("unknown") == router.select_model(TaskType.fast)
+
+
+def test_run_status_has_cancelled():
+    from backend.models.db import RunStatus
+
+    assert RunStatus.cancelled == "cancelled"
+    statuses = {s.value for s in RunStatus}
+    assert "cancelled" in statuses
 
 
 @pytest.mark.asyncio
@@ -142,3 +160,165 @@ def test_fastapi_app_creates():
     routes = [r.path for r in app.routes]
     assert "/api/runs" in routes
     assert "/api/health" in routes
+
+
+def test_fastapi_routes_include_new_endpoints():
+    """Cancel + SSE stream routes must be registered."""
+    from backend.main import create_app
+
+    app = create_app()
+    paths = [r.path for r in app.routes]
+    assert "/api/runs/{run_id}" in paths          # GET + DELETE
+    assert "/api/runs/{run_id}/stream" in paths   # SSE
+
+
+@pytest.mark.asyncio
+async def test_empty_goal_rejected(tmp_path):
+    """POST /api/runs with an empty goal must return 422."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/api/runs", json={"goal": ""})
+        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
+
+        # Whitespace-only should also be rejected
+        r2 = await client.post("/api/runs", json={"goal": "   "})
+        assert r2.status_code == 422, f"Expected 422 for whitespace goal, got {r2.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_cancel_run(tmp_path):
+    """DELETE /api/runs/{id} marks the run as cancelled."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create a run
+        r = await client.post("/api/runs", json={"goal": "Do something long"})
+        assert r.status_code == 200
+        run_id = r.json()["id"]
+
+        # Cancel it immediately
+        r2 = await client.delete(f"/api/runs/{run_id}")
+        assert r2.status_code == 204
+
+        # Check status
+        r3 = await client.get(f"/api/runs/{run_id}")
+        assert r3.json()["status"] == "cancelled"
+
+        # Cancelling again returns 409
+        r4 = await client.delete(f"/api/runs/{run_id}")
+        assert r4.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_nonexistent_run(tmp_path):
+    """DELETE /api/runs/{id} for unknown id returns 404."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.delete("/api/runs/no-such-id")
+        assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_sse_stream_returns_streaming_response(tmp_path):
+    """GET /api/runs/{id}/stream returns a text/event-stream response."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Non-existent run should 404
+        r404 = await client.get("/api/runs/no-such/stream")
+        assert r404.status_code == 404
+
+        # Create a run then immediately check stream headers
+        rc = await client.post("/api/runs", json={"goal": "Stream test goal"})
+        run_id = rc.json()["id"]
+
+        async with client.stream("GET", f"/api/runs/{run_id}/stream") as resp:
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            # Read at least one chunk to confirm the stream sends data
+            chunks = []
+            async for chunk in resp.aiter_text():
+                chunks.append(chunk)
+                if len(chunks) >= 1:
+                    break
+            assert len(chunks) >= 1
+
+
+@pytest.mark.asyncio
+async def test_concurrency_semaphore_limits_runs():
+    """_get_semaphore respects max_concurrent_runs from config."""
+    import backend.api.runs as runs_module
+    from backend.config import AppConfig
+
+    # Save originals
+    original_sem = runs_module._RUN_SEMAPHORE
+    original_get = runs_module.get_config
+
+    # Reset semaphore and patch the get_config reference *inside* the runs module
+    runs_module._RUN_SEMAPHORE = None
+    runs_module.get_config = lambda: AppConfig.model_validate(
+        {"server": {"max_concurrent_runs": 2}}
+    )
+
+    try:
+        sem = runs_module._get_semaphore()
+        assert sem._value == 2  # asyncio.Semaphore._value holds initial count
+
+        # Same semaphore returned on subsequent calls
+        assert runs_module._get_semaphore() is sem
+    finally:
+        runs_module.get_config = original_get
+        runs_module._RUN_SEMAPHORE = original_sem
+
+
+def test_topological_sort_cycle_safety():
+    """_topological_sort must not hang on a cyclic dependency graph."""
+    from backend.agents.orchestrator import Orchestrator
+    from backend.models.db import Task
+
+    def make(tid, deps):
+        t = Task()
+        t.id = tid
+        t.title = tid
+        t.depends_on = deps
+        return t
+
+    # Cycle: t1 -> t2 -> t1
+    t1 = make("t1", ["t2"])
+    t2 = make("t2", ["t1"])
+    result = Orchestrator._topological_sort([t1, t2])
+    assert len(result) == 2   # all tasks returned, no hang

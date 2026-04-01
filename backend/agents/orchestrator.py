@@ -13,9 +13,12 @@ from backend.agents.planner import Planner
 from backend.agents.tool_operator import ToolOperator
 from backend.agents.verifier import Verifier
 from backend.config import get_config
+from backend.llm.ollama_client import OllamaClient
 from backend.llm.router import ModelRouter, TaskType
 from backend.models.db import Artifact, Event, EventKind, Run, RunStatus, Task, TaskStatus
 from backend.tools.bus import ToolBus
+
+_TERMINAL = {RunStatus.completed, RunStatus.failed, RunStatus.cancelled}
 
 
 class Orchestrator:
@@ -38,6 +41,20 @@ class Orchestrator:
         await self._log_event(run.id, EventKind.agent_message, "orchestrator",
                               f"Starting run: {run.goal}")
 
+        # ── Preflight: verify Ollama is reachable ──────────────────────────────
+        ollama = OllamaClient()
+        if not await ollama.is_available():
+            run.status = RunStatus.failed
+            await self._log_event(
+                run.id, EventKind.agent_message, "orchestrator",
+                "Ollama is not running. "
+                "Start it with: `ollama serve`, "
+                "then pull a model: `ollama pull llama3.2:3b`",
+            )
+            self._session.add(run)
+            await self._session.commit()
+            return
+
         try:
             # 1. Plan
             tasks = await self._planner.create_plan(run.goal, run.id)
@@ -52,17 +69,28 @@ class Orchestrator:
             # 2. Execute tasks in DAG order
             completed: dict[str, Any] = {}
             for task in self._topological_sort(tasks):
+                # Check if the run has been cancelled between tasks
+                await self._session.refresh(run)
+                if run.status == RunStatus.cancelled:
+                    task.status = TaskStatus.skipped
+                    self._session.add(task)
+                    await self._session.commit()
+                    continue
                 await self._execute_task(run, task, completed)
                 completed[task.id] = task.result
 
-            # 3. Mark run complete
-            run.status = RunStatus.completed
-            await self._log_event(run.id, EventKind.agent_message, "orchestrator",
-                                  "All tasks completed successfully.")
+            # 3. Mark run complete (unless cancelled mid-run)
+            await self._session.refresh(run)
+            if run.status not in _TERMINAL:
+                run.status = RunStatus.completed
+                await self._log_event(run.id, EventKind.agent_message, "orchestrator",
+                                      "All tasks completed successfully.")
         except Exception as exc:
-            run.status = RunStatus.failed
-            await self._log_event(run.id, EventKind.agent_message, "orchestrator",
-                                  f"Run failed: {exc}")
+            await self._session.refresh(run)
+            if run.status not in _TERMINAL:
+                run.status = RunStatus.failed
+                await self._log_event(run.id, EventKind.agent_message, "orchestrator",
+                                      f"Run failed: {exc}")
         finally:
             self._session.add(run)
             await self._session.commit()
