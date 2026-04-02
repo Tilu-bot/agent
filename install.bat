@@ -14,14 +14,23 @@ net session >nul 2>&1
 if errorlevel 1 (
     echo  [!] Administrator rights are needed to install software.
     echo.
-    echo      A Windows security prompt (UAC) will appear asking you to allow
+    echo      A Windows security prompt will appear asking you to allow
     echo      changes.  Click YES / Allow.
     echo.
     echo      A NEW installer window will then open and continue automatically.
     echo      This window will close -- please watch the new one.
     echo.
     pause
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    powershell -NoProfile -Command "try { Start-Process 'cmd.exe' -Verb RunAs -ArgumentList '/k ""%~f0"" --elevated' -ErrorAction Stop; exit 0 } catch { exit 1 }"
+    if errorlevel 1 (
+        echo.
+        echo  [ERROR] Could not launch elevated installer.
+        echo          UAC may have been cancelled or blocked.
+        echo          Please right-click install.bat and choose Run as administrator.
+        echo.
+        pause
+        exit /b 1
+    )
     exit /b
 )
 
@@ -44,7 +53,7 @@ if errorlevel 1 (
         "%TEMP%\python-installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
         del "%TEMP%\python-installer.exe" >nul 2>&1
     )
-    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set "PATH=%%p;!PATH!"
     python --version >nul 2>&1
     if errorlevel 1 (
         echo  [ERROR] Python install failed. Please restart this script and try again.
@@ -69,7 +78,7 @@ if errorlevel 1 (
         msiexec /i "%TEMP%\nodejs-installer.msi" /qn ADDLOCAL=ALL
         del "%TEMP%\nodejs-installer.msi" >nul 2>&1
     )
-    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set "PATH=%%p;!PATH!"
     node --version >nul 2>&1
     if errorlevel 1 (
         echo  [ERROR] Node.js install failed. Please restart this script and try again.
@@ -94,7 +103,7 @@ if errorlevel 1 (
         "%TEMP%\OllamaSetup.exe" /S
         del "%TEMP%\OllamaSetup.exe" >nul 2>&1
     )
-    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set PATH=%%p;%PATH%
+    for /f "tokens=*" %%p in ('powershell -Command "[System.Environment]::GetEnvironmentVariable(\"PATH\",\"Machine\")"') do set "PATH=%%p;!PATH!"
     ollama --version >nul 2>&1
     if errorlevel 1 (
         echo  [ERROR] Ollama install failed. Please restart this script and try again.
@@ -112,7 +121,7 @@ docker --version >nul 2>&1
 set DOCKER_OK=0
 if errorlevel 1 (
     echo  [>>] Docker Desktop not found - installing automatically...
-    echo      (Enables the secure code-execution sandbox.)
+    echo      Enables the secure code-execution sandbox.
     if "%WINGET_OK%"=="1" (
         winget install --id Docker.DockerDesktop -e --silent --accept-package-agreements --accept-source-agreements
     ) else (
@@ -144,7 +153,7 @@ if not exist "backend\.venv" (
     echo  [OK] Python environment already exists.
 )
 echo  Installing Python packages (may take a few minutes on first run)...
-echo  (You will see package names scroll by - this is normal.)
+echo  ^(You will see package names scroll by - this is normal.^)
 backend\.venv\Scripts\python.exe -m pip install --upgrade pip
 backend\.venv\Scripts\pip.exe install -r backend\requirements.txt
 if errorlevel 1 ( echo  [ERROR] Package install failed. & pause & exit /b 1 )
@@ -158,7 +167,7 @@ echo.
 :: 6. NODE.JS FRONTEND DEPENDENCIES
 :: ════════════════════════════════════════════════════════════════════════════
 echo  Installing web packages (may take a few minutes on first run)...
-echo  (You will see package names scroll by - this is normal.)
+echo  ^(You will see package names scroll by - this is normal.^)
 cd frontend
 call npm install
 if errorlevel 1 ( cd .. & echo  [ERROR] npm install failed. & pause & exit /b 1 )
@@ -199,11 +208,11 @@ if errorlevel 1 (
     start /B ollama serve
     timeout /t 5 /nobreak >nul
 )
-echo  Downloading llama3.2:3b  (main model, ~2 GB) ...
+echo  Downloading llama3.2:3b  ^(main model, ~2 GB^) ...
 ollama pull llama3.2:3b
-echo  Downloading qwen2.5-coder:3b  (code model, ~2 GB) ...
+echo  Downloading qwen2.5-coder:3b  ^(code model, ~2 GB^) ...
 ollama pull qwen2.5-coder:3b
-echo  Downloading nomic-embed-text  (tiny embedding model) ...
+echo  Downloading nomic-embed-text  ^(tiny embedding model^) ...
 ollama pull nomic-embed-text
 echo  [OK] All AI models downloaded.
 
@@ -231,7 +240,7 @@ echo   SETUP COMPLETE!
 echo.
 echo   To launch Agentic:
 echo     * Double-click "Agentic AI" on your Desktop
-echo       (or double-click start.bat in this folder)
+echo       ^(or double-click start.bat in this folder^)
 echo.
 echo   The app opens in your browser automatically.
 echo  =====================================================
