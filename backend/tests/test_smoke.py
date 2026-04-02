@@ -1813,3 +1813,351 @@ async def test_training_status_idle(tmp_path):
             assert data["job_id"] is None
     finally:
         training_module._current_job_id = original
+
+
+# ── Architectural gap-bridging tests ─────────────────────────────────────────
+
+def test_event_kind_includes_new_kinds():
+    """EventKind now includes task_started, task_completed, error, critic."""
+    from backend.models.db import EventKind
+
+    kinds = {k.value for k in EventKind}
+    assert "task_started" in kinds
+    assert "task_completed" in kinds
+    assert "error" in kinds
+    assert "critic" in kinds
+
+
+def test_memory_model_has_embedding_column():
+    """Memory ORM model has an embedding column for persisted vectors."""
+    from backend.models.db import Memory
+    import inspect
+
+    # Check that the column is declared on the mapper
+    cols = {c.key for c in Memory.__mapper__.column_attrs}
+    assert "embedding" in cols
+
+
+def test_config_has_llm_section():
+    """AppConfig.llm section exposes timeout_seconds and per_type_timeout."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.llm.timeout_seconds > 0
+    assert "fast" in cfg.llm.per_type_timeout
+    assert "reasoning" in cfg.llm.per_type_timeout
+    assert cfg.llm.per_type_timeout["fast"] < cfg.llm.per_type_timeout["reasoning"]
+
+
+def test_config_has_critic_section():
+    """AppConfig.critic section is present and defaults are sane."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.critic.enabled is True
+    assert 0 < cfg.critic.quality_threshold <= 100
+
+
+def test_config_has_context_budget():
+    """AppConfig.memory.context_budget_chars is a positive integer."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.memory.context_budget_chars > 0
+
+
+def test_config_has_max_runtime_seconds():
+    """AppConfig.server.max_runtime_seconds exists and defaults to 0 (no limit)."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.server.max_runtime_seconds == 0
+
+
+def test_ollama_client_timeout_for_fast():
+    """OllamaClient returns a shorter timeout for fast tasks."""
+    from backend.llm.ollama_client import OllamaClient
+
+    client = OllamaClient()
+    fast_timeout = client._timeout_for("fast")
+    reasoning_timeout = client._timeout_for("reasoning")
+    assert fast_timeout < reasoning_timeout
+
+
+def test_ollama_client_default_timeout_for_unknown_type():
+    """OllamaClient returns default timeout for unknown task type."""
+    from backend.llm.ollama_client import OllamaClient
+    from backend.config import AppConfig
+
+    client = OllamaClient()
+    cfg = AppConfig()
+    assert client._timeout_for("unknown_type") == cfg.llm.timeout_seconds
+
+
+@pytest.mark.asyncio
+async def test_critic_agent_returns_quality_dict():
+    """CriticAgent returns a dict with quality, passed, issues."""
+    from backend.agents.critic import CriticAgent
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"quality": 85, "passed": true, "issues": []}'
+
+    critic = CriticAgent(FakeRouter())
+    result = await critic.evaluate(
+        "What is the capital of France?",
+        "The capital of France is Paris, a major European city with a population of over 2 million."
+    )
+    assert result["quality"] == 85
+    assert result["passed"] is True
+    assert result["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_critic_agent_parses_low_quality():
+    """CriticAgent surfaces issues for low-quality synthesis."""
+    from backend.agents.critic import CriticAgent
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"quality": 30, "passed": false, "issues": ["Answer is incomplete", "Missing key facts"]}'
+
+    critic = CriticAgent(FakeRouter())
+    result = await critic.evaluate("Explain quantum computing", "It is complex.")
+    assert result["quality"] == 30
+    assert result["passed"] is False
+    assert len(result["issues"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_critic_agent_handles_empty_synthesis():
+    """CriticAgent returns failed quality for empty synthesis."""
+    from backend.agents.critic import CriticAgent
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"quality": 100, "passed": true, "issues": []}'
+
+    critic = CriticAgent(FakeRouter())
+    result = await critic.evaluate("Some goal", "")
+    # Empty synthesis short-circuits to failed without calling LLM
+    assert result["quality"] == 0
+    assert result["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_critic_agent_handles_bad_json():
+    """CriticAgent handles malformed LLM responses gracefully."""
+    from backend.agents.critic import CriticAgent
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return "I cannot evaluate this."
+
+    critic = CriticAgent(FakeRouter())
+    result = await critic.evaluate("Goal", "Some synthesis text here.")
+    assert "quality" in result
+    assert "passed" in result
+    assert "issues" in result
+
+
+def test_planner_expanded_roles():
+    """Planner system prompt includes all new role names."""
+    from backend.agents.planner import Planner
+    from backend.llm.router import ModelRouter
+
+    router = ModelRouter()
+    planner = Planner(router)
+    prompt = planner._build_system_prompt(None, None)
+
+    for role in ("mathematician", "data_scientist", "summarizer", "critic"):
+        assert role in prompt, f"Role '{role}' missing from planner system prompt"
+
+
+def test_tool_operator_includes_new_roles():
+    """_ROLE_TASK_TYPE includes all newly added roles."""
+    from backend.agents.tool_operator import _ROLE_TASK_TYPE
+    from backend.llm.router import TaskType
+
+    assert _ROLE_TASK_TYPE["data_scientist"] == TaskType.code
+    assert _ROLE_TASK_TYPE["summarizer"] == TaskType.reasoning
+    assert _ROLE_TASK_TYPE["critic"] == TaskType.reasoning
+
+
+@pytest.mark.asyncio
+async def test_python_run_tool_basic():
+    """python.run executes simple code and returns stdout."""
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "print(2 + 2)"})
+    assert result.success
+    assert "4" in result.output["stdout"]
+    assert result.output["exit_code"] == 0
+
+
+@pytest.mark.asyncio
+async def test_python_run_tool_missing_code():
+    """python.run returns error when code is missing."""
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({})
+    assert not result.success
+    assert "code" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_python_run_tool_runtime_error():
+    """python.run captures runtime errors in exit_code and stderr."""
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "raise ValueError('oops')"})
+    assert not result.success
+    assert result.output is None or (isinstance(result.error, str) and len(result.error) > 0)
+
+
+@pytest.mark.asyncio
+async def test_python_run_tool_blocks_dangerous():
+    """python.run rejects code with banned patterns."""
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "import subprocess; subprocess.run(['ls'])"})
+    assert not result.success
+    assert "dangerous" in result.error.lower() or "blocked" in result.error.lower()
+
+
+def test_cached_tool_bus_is_subclass_of_tool_bus():
+    """CachedToolBus is a drop-in replacement for ToolBus."""
+    from backend.tools.cache import CachedToolBus
+    from backend.tools.bus import ToolBus
+
+    bus = CachedToolBus()
+    assert isinstance(bus, ToolBus)
+
+
+@pytest.mark.asyncio
+async def test_cached_tool_bus_caches_results():
+    """CachedToolBus returns cached result on second identical call."""
+    from backend.tools.cache import CachedToolBus
+    from backend.tools.bus import BaseTool, ToolInput, ToolResult
+
+    call_count = 0
+
+    class CountingTool(BaseTool):
+        name = "count.tool"
+        description = "Counts calls"
+
+        async def execute(self, params):
+            nonlocal call_count
+            call_count += 1
+            return ToolResult.from_success(self.name, {"count": call_count})
+
+    bus = CachedToolBus(ttl_seconds=60)
+    bus.register(CountingTool())
+
+    r1 = await bus.call(ToolInput("count.tool", {"x": 1}, run_id="run1"))
+    r2 = await bus.call(ToolInput("count.tool", {"x": 1}, run_id="run1"))
+
+    assert call_count == 1  # second call hits cache
+    assert r1.output == r2.output
+
+
+@pytest.mark.asyncio
+async def test_cached_tool_bus_different_params_bypass_cache():
+    """CachedToolBus does NOT cache-hit for different params."""
+    from backend.tools.cache import CachedToolBus
+    from backend.tools.bus import BaseTool, ToolInput, ToolResult
+
+    call_count = 0
+
+    class CountingTool(BaseTool):
+        name = "count.tool2"
+        description = "Counts calls"
+
+        async def execute(self, params):
+            nonlocal call_count
+            call_count += 1
+            return ToolResult.from_success(self.name, {"count": call_count})
+
+    bus = CachedToolBus(ttl_seconds=60)
+    bus.register(CountingTool())
+
+    await bus.call(ToolInput("count.tool2", {"x": 1}, run_id="run1"))
+    await bus.call(ToolInput("count.tool2", {"x": 2}, run_id="run1"))
+
+    assert call_count == 2  # different params → two real calls
+
+
+@pytest.mark.asyncio
+async def test_cached_tool_bus_never_caches_scratchpad():
+    """CachedToolBus does not cache side-effectful tools like scratchpad.write."""
+    from backend.tools.cache import CachedToolBus, NEVER_CACHE
+
+    assert "scratchpad.write" in NEVER_CACHE
+    assert "scratchpad.read" in NEVER_CACHE
+    assert "shell.exec" in NEVER_CACHE
+    assert "python.run" in NEVER_CACHE
+
+
+def test_cached_tool_bus_cache_stats():
+    """CachedToolBus.cache_stats returns expected keys."""
+    from backend.tools.cache import CachedToolBus
+
+    bus = CachedToolBus()
+    stats = bus.cache_stats()
+    assert "total_entries" in stats
+    assert "live_entries" in stats
+    assert "ttl_seconds" in stats
+
+
+def test_default_tool_bus_is_cached_bus():
+    """create_default_tool_bus returns a CachedToolBus instance."""
+    from backend.tools import create_default_tool_bus
+    from backend.tools.cache import CachedToolBus
+
+    bus = create_default_tool_bus()
+    assert isinstance(bus, CachedToolBus)
+
+
+def test_default_tool_bus_includes_python_run():
+    """create_default_tool_bus registers python.run."""
+    from backend.tools import create_default_tool_bus
+
+    bus = create_default_tool_bus()
+    assert "python.run" in bus.list_tools()
+
+
+def test_memory_store_recall_uses_stored_embedding():
+    """MemoryStore.recall reads stored embeddings rather than calling embed() for each."""
+    # This is a structural test — we verify the code path exists and the
+    # Memory model has an embedding field used during recall.
+    from backend.agents.memory import MemoryStore
+    from backend.models.db import Memory
+    import inspect
+
+    src = inspect.getsource(MemoryStore.recall)
+    assert "m.embedding" in src  # reads stored embedding
+    assert "embedding=" in inspect.getsource(MemoryStore.record_run)  # persists it
+
+
+def test_orchestrator_imports_critic():
+    """Orchestrator imports and uses CriticAgent."""
+    import inspect
+    from backend.agents import orchestrator as orch_module
+
+    src = inspect.getsource(orch_module)
+    assert "CriticAgent" in src
+    assert "clear_run_scratchpad" in src
+    assert "_run_inner" in src
+    assert "_budget_context" in src
+
+
+def test_context_budget_chars_default():
+    """Default context budget is 6000 characters."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.memory.context_budget_chars == 6000

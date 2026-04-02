@@ -8,12 +8,13 @@ Before planning, the Planner calls ``recall()`` to get the most relevant past
 learnings and injects them as context so the agent improves over time.
 
 Recall strategy (in priority order):
-1. **Embedding similarity** — cosine similarity between the goal embedding and
-   each stored ``goal_summary`` embedding, when the configured embedding model
-   is reachable.  This gives true semantic matching (e.g. "write Python code"
-   matches "implement a Python script").
-2. **Word-overlap** (fallback) — simple keyword intersection used when the
-   embedding model is unavailable.
+1. **Stored embedding similarity** — if the Memory row already has a stored
+   embedding vector, use it directly (no extra Ollama call).  Only the query
+   goal is embedded.  This makes recall O(1) Ollama calls instead of O(n).
+2. **Live embedding similarity** — embed any Memory rows that don't yet have a
+   stored vector and cache the result back into the DB.
+3. **Word-overlap** (fallback) — simple keyword intersection used when the
+   embedding model is entirely unavailable.
 """
 
 from __future__ import annotations
@@ -62,8 +63,9 @@ class MemoryStore:
     async def recall(self, goal: str, limit: int = 3) -> list[str]:
         """Return up to ``limit`` past learnings most relevant to this goal.
 
-        Uses embedding-based cosine similarity when the embedding model is
-        available; falls back to keyword overlap otherwise.
+        Uses stored embedding vectors for O(1) Ollama calls (only the query
+        goal is embedded; stored embeddings are read from the DB).  Falls back
+        to keyword overlap when the embedding model is unavailable.
         """
         try:
             async with session_scope() as session:
@@ -82,11 +84,20 @@ class MemoryStore:
                 if goal_vec:
                     scored: list[tuple[float, Memory]] = []
                     for m in memories:
-                        try:
-                            mem_vec = await self._ollama.embed(embedding_model, m.goal_summary)
-                            sim = _cosine(goal_vec, mem_vec)
-                        except Exception:
-                            sim = 0.0
+                        # Use stored embedding if available; otherwise embed and cache.
+                        mem_vec: list[float] = m.embedding or []
+                        if not mem_vec:
+                            try:
+                                mem_vec = await self._ollama.embed(embedding_model, m.goal_summary)
+                                # Persist the freshly-computed embedding so future
+                                # recalls skip this Ollama call entirely.
+                                async with session_scope() as s:
+                                    fresh = await s.get(Memory, m.id)
+                                    if fresh is not None:
+                                        fresh.embedding = mem_vec
+                            except Exception:
+                                mem_vec = []
+                        sim = _cosine(goal_vec, mem_vec)
                         scored.append((sim, m))
                     scored.sort(key=lambda x: -x[0])
                     return [m.learnings for _, m in scored[:limit]]
@@ -114,6 +125,7 @@ class MemoryStore:
     ) -> None:
         """Summarise a completed run and persist the learnings.
 
+        Also embeds the goal_summary so future recalls skip the Ollama call.
         Failures are silently swallowed so that memory errors never affect the
         outcome of a run.
         """
@@ -142,12 +154,20 @@ class MemoryStore:
             if not learnings.strip():
                 return
 
+            # Pre-compute the embedding so recall is fast.
+            embedding: list[float] | None = None
+            try:
+                embedding = await self._ollama.embed(self._cfg.models.embedding, goal[:256])
+            except Exception:
+                pass
+
             async with session_scope() as session:
                 memory = Memory(
                     id=str(uuid.uuid4()),
                     run_id=run_id,
                     goal_summary=goal[:256],
                     learnings=learnings.strip(),
+                    embedding=embedding,
                 )
                 session.add(memory)
         except Exception:

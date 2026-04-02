@@ -13,6 +13,14 @@ class OllamaClient:
     def __init__(self, base_url: str | None = None):
         cfg = get_config()
         self._base_url = (base_url or cfg.ollama.base_url).rstrip("/")
+        self._default_timeout = cfg.llm.timeout_seconds
+        self._per_type_timeout = cfg.llm.per_type_timeout
+
+    def _timeout_for(self, task_type: str | None) -> int:
+        """Return the timeout (seconds) for a given task type."""
+        if task_type and task_type in self._per_type_timeout:
+            return self._per_type_timeout[task_type]
+        return self._default_timeout
 
     async def chat(
         self,
@@ -20,6 +28,7 @@ class OllamaClient:
         messages: list[dict[str, str]],
         stream: bool = False,
         options: dict[str, Any] | None = None,
+        task_type: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -28,7 +37,8 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
-        async with httpx.AsyncClient(timeout=120) as client:
+        timeout = self._timeout_for(task_type)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self._base_url}/api/chat", json=payload)
             resp.raise_for_status()
             return resp.json()
@@ -39,6 +49,7 @@ class OllamaClient:
         prompt: str,
         stream: bool = False,
         options: dict[str, Any] | None = None,
+        task_type: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -47,7 +58,8 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
-        async with httpx.AsyncClient(timeout=120) as client:
+        timeout = self._timeout_for(task_type)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self._base_url}/api/generate", json=payload)
             resp.raise_for_status()
             return resp.json()

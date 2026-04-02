@@ -37,6 +37,10 @@ class EventKind(str, Enum):
     verification = "verification"
     reflexion = "reflexion"
     synthesis = "synthesis"
+    task_started = "task_started"
+    task_completed = "task_completed"
+    error = "error"
+    critic = "critic"
 
 
 class Run(Base):
@@ -113,4 +117,7 @@ class Memory(Base):
     run_id: Mapped[Optional[str]] = mapped_column(String(36))
     goal_summary: Mapped[str] = mapped_column(Text, nullable=False)
     learnings: Mapped[str] = mapped_column(Text, nullable=False)
+    # Cached embedding vector (list[float]) for fast semantic recall.
+    # Stored as JSON; None means the embedding has not been computed yet.
+    embedding: Mapped[Optional[list[float]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

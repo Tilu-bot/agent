@@ -15,11 +15,14 @@ _MAX_RETRIES = 3
 _ROLE_TASK_TYPE: dict[str, TaskType] = {
     "coder": TaskType.code,
     "researcher": TaskType.search,
+    "mathematician": TaskType.math,
+    "data_scientist": TaskType.code,
     "analyst": TaskType.reasoning,
     "writer": TaskType.reasoning,
+    "summarizer": TaskType.reasoning,
     "verifier": TaskType.fast,
     "tool_operator": TaskType.fast,
-    "mathematician": TaskType.math,
+    "critic": TaskType.reasoning,
 }
 
 _SYSTEM_HEADER = (

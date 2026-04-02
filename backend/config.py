@@ -19,6 +19,21 @@ class ModelsConfig(BaseModel):
     embedding: str = "nomic-embed-text"
 
 
+class LLMConfig(BaseModel):
+    """Timeout and generation settings for the Ollama client."""
+
+    timeout_seconds: int = 120
+    # Per-task-type timeout overrides (seconds).  Keys match TaskType values.
+    per_type_timeout: dict[str, int] = {
+        "fast": 30,
+        "reasoning": 120,
+        "code": 120,
+        "search": 60,
+        "math": 90,
+        "vision": 120,
+    }
+
+
 class OllamaConfig(BaseModel):
     base_url: str = "http://localhost:11434"
 
@@ -60,12 +75,33 @@ class ServerConfig(BaseModel):
     port: int = 8000
     cors_origins: list[str] = ["http://localhost:3000"]
     max_concurrent_runs: int = 5
+    # Maximum wall-clock seconds a single run is allowed to run before it is
+    # forcibly failed.  0 means no limit.
+    max_runtime_seconds: int = 0
 
 
 class MemoryConfig(BaseModel):
     enabled: bool = True
     recall_limit: int = 3
     max_parallel_tasks: int = 4
+    # Maximum characters of aggregated dependency results injected as task
+    # context.  Outputs exceeding this budget are summarized by the LLM before
+    # being passed to the next task so we never overflow the context window.
+    context_budget_chars: int = 6000
+
+
+class CriticConfig(BaseModel):
+    """Post-synthesis quality check.
+
+    When enabled, a Critic agent reads the synthesized final answer and
+    assesses whether it fully addresses the original goal.  If the quality
+    is below the threshold the issue list is appended to the synthesis event
+    so the user can see what may be incomplete.
+    """
+
+    enabled: bool = True
+    # Quality score (0-100) below which issues are flagged.
+    quality_threshold: int = 60
 
 
 class DebateConfig(BaseModel):
@@ -110,6 +146,7 @@ class SynthesisConfig(BaseModel):
 
 class AppConfig(BaseModel):
     models: ModelsConfig = ModelsConfig()
+    llm: LLMConfig = LLMConfig()
     ollama: OllamaConfig = OllamaConfig()
     tools: ToolsConfig = ToolsConfig()
     artifacts: ArtifactsConfig = ArtifactsConfig()
@@ -119,6 +156,7 @@ class AppConfig(BaseModel):
     debate: DebateConfig = DebateConfig()
     reflexion: ReflexionConfig = ReflexionConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
+    critic: CriticConfig = CriticConfig()
 
 
 @lru_cache

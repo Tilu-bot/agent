@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.agents.critic import CriticAgent
 from backend.agents.debater import Debater
 from backend.agents.memory import MemoryStore
 from backend.agents.planner import Planner
@@ -24,6 +25,7 @@ from backend.llm.router import ModelRouter
 from backend.models.database import get_session_factory
 from backend.models.db import Artifact, Event, EventKind, Run, RunStatus, Task, TaskStatus
 from backend.tools.bus import ToolBus
+from backend.tools.scratchpad import clear_run_scratchpad
 
 _TERMINAL = {RunStatus.completed, RunStatus.failed, RunStatus.cancelled}
 
@@ -40,6 +42,15 @@ class Orchestrator:
       tools so it can design tasks that map cleanly onto real capabilities.
     * **Session isolation**: every concurrent task operates in its own
       SQLAlchemy session to avoid cross-task session conflicts.
+    * **Context budget**: dependency results are truncated / summarized before
+      being injected into the next task so the model's context window is never
+      silently overflowed.
+    * **Critic**: after synthesis a Critic agent evaluates the final answer
+      quality and surfaces any gaps to the user.
+    * **Scratchpad cleanup**: per-run in-memory scratchpad is cleared when the
+      run terminates to avoid memory leaks.
+    * **Run timeout**: if ``server.max_runtime_seconds > 0`` the entire run is
+      forcibly failed after that many seconds.
     """
 
     def __init__(
@@ -58,6 +69,7 @@ class Orchestrator:
         self._verifier = Verifier(self._router)
         self._reflexion = ReflexionAgent(self._router)
         self._synthesizer = Synthesizer(self._router)
+        self._critic = CriticAgent(self._router)
         self._memory = MemoryStore(self._router)
         self._cfg = get_config()
 
@@ -73,6 +85,28 @@ class Orchestrator:
         self._session.add(run)
         await self._session.commit()
 
+        max_runtime = self._cfg.server.max_runtime_seconds
+        if max_runtime > 0:
+            try:
+                await asyncio.wait_for(self._run_inner(run), timeout=max_runtime)
+            except asyncio.TimeoutError:
+                await self._session.refresh(run)
+                if run.status not in _TERMINAL:
+                    run.status = RunStatus.failed
+                    await self._log_event(
+                        run.id, EventKind.error, "orchestrator",
+                        f"Run exceeded maximum runtime of {max_runtime}s and was terminated.",
+                    )
+                    self._session.add(run)
+                    await self._session.commit()
+        else:
+            await self._run_inner(run)
+
+        # Clean up per-run scratchpad regardless of outcome.
+        clear_run_scratchpad(run.id)
+
+    async def _run_inner(self, run: Run) -> None:
+        """Core run logic (extracted so we can wrap it with a timeout)."""
         await self._log_event(run.id, EventKind.agent_message, "orchestrator",
                               f"Starting run: {run.goal}")
 
@@ -154,6 +188,7 @@ class Orchestrator:
 
             # ── 5. Synthesize a final answer from all task results ─────────────
             await self._session.refresh(run)
+            synthesis = ""
             if run.status not in _TERMINAL and self._cfg.synthesis.enabled:
                 all_tasks_result = await self._session.execute(
                     select(Task).where(
@@ -171,7 +206,16 @@ class Orchestrator:
                             synthesis,
                         )
 
-            # ── 6. Mark run complete ───────────────────────────────────────────
+            # ── 6. Critic: evaluate quality of the synthesis ───────────────────
+            if synthesis and self._cfg.critic.enabled:
+                critique = await self._critic.evaluate(run.goal, synthesis)
+                await self._log_event(
+                    run.id, EventKind.critic, "critic",
+                    f"Quality={critique['quality']}/100 passed={critique['passed']}",
+                    critique,
+                )
+
+            # ── 7. Mark run complete ───────────────────────────────────────────
             await self._session.refresh(run)
             if run.status not in _TERMINAL:
                 run.status = RunStatus.completed
@@ -181,7 +225,7 @@ class Orchestrator:
             await self._session.refresh(run)
             if run.status not in _TERMINAL:
                 run.status = RunStatus.failed
-                await self._log_event(run.id, EventKind.agent_message, "orchestrator",
+                await self._log_event(run.id, EventKind.error, "orchestrator",
                                       f"Run failed: {exc}")
         finally:
             self._session.add(run)
@@ -246,10 +290,15 @@ class Orchestrator:
         session.add(task)
         await session.commit()
 
-        await self._log_event(run.id, EventKind.agent_message, task.agent_role or "agent",
-                              f"Starting task: {task.title}", task_id=task.id, session=session)
+        await self._log_event(
+            run.id, EventKind.task_started, task.agent_role or "agent",
+            f"Task started: {task.title}", task_id=task.id, session=session,
+        )
 
-        context = json.dumps({dep: completed.get(dep) for dep in (task.depends_on or [])})
+        # Build context from dependency results with budget enforcement.
+        raw_context = json.dumps({dep: completed.get(dep) for dep in (task.depends_on or [])})
+        context = await self._budget_context(raw_context)
+
         try:
             outcome = await self._tool_op.execute_task(task, context, run_id=run.id)
 
@@ -341,14 +390,61 @@ class Orchestrator:
             # Store plain-text results (direct LLM answers) as text artifacts
             if outcome.get("kind") == "direct" and task.result:
                 await self._store_text_artifact(run.id, task.id, task.result, session=session)
+
+            await self._log_event(
+                run.id, EventKind.task_completed, task.agent_role or "agent",
+                f"Task completed: {task.title}",
+                {"result_preview": task.result[:200] if task.result else ""},
+                task_id=task.id, session=session,
+            )
         except Exception as exc:
             task.status = TaskStatus.failed
             task.result = str(exc)
-            await self._log_event(run.id, EventKind.agent_message, "orchestrator",
-                                  f"Task failed: {exc}", task_id=task.id, session=session)
+            await self._log_event(
+                run.id, EventKind.error, "orchestrator",
+                f"Task failed: {exc}", task_id=task.id, session=session,
+            )
         finally:
             session.add(task)
             await session.commit()
+
+    # ── Context budget management ──────────────────────────────────────────────
+
+    async def _budget_context(self, raw_context: str) -> str:
+        """Truncate or summarize dependency context to stay within budget.
+
+        If the raw context JSON string exceeds ``memory.context_budget_chars``
+        we ask the LLM to produce a concise summary of the dependency results
+        so the next task receives a dense but compact context that doesn't
+        overflow the model's context window.
+        """
+        budget = self._cfg.memory.context_budget_chars
+        if len(raw_context) <= budget:
+            return raw_context
+
+        # Try LLM summarization; fall back to hard truncation on any error.
+        try:
+            from backend.llm.router import TaskType
+            summary = await self._router.chat(
+                TaskType.fast,
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a context compressor. Summarize the following task results "
+                            "into a concise JSON-like summary that preserves the key facts and "
+                            "findings. Be dense and specific. Max 500 words."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": raw_context[:budget * 2],
+                    },
+                ],
+            )
+            return summary[:budget] if summary else raw_context[:budget]
+        except Exception:
+            return raw_context[:budget]
 
     # ── Logging & artifact helpers ─────────────────────────────────────────────
 

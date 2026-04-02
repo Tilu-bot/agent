@@ -28,9 +28,19 @@ class Planner:
         "    ...\n"
         "  ]\n"
         "}\n"
-        "agent_role must be one of: researcher, coder, analyst, writer, tool_operator, verifier.\n"
+        "agent_role must be one of:\n"
+        "  researcher      — web search, information gathering\n"
+        "  coder           — writing or debugging code\n"
+        "  mathematician   — symbolic math, proofs, numerical analysis\n"
+        "  data_scientist  — data analysis, statistics, pandas/numpy operations\n"
+        "  analyst         — reasoning over gathered data to draw conclusions\n"
+        "  writer          — drafting prose, reports, summaries, documentation\n"
+        "  summarizer      — condensing large inputs into concise summaries\n"
+        "  tool_operator   — direct tool calls (files, shell, APIs)\n"
+        "  verifier        — checking results for correctness\n"
+        "  critic          — evaluating quality and completeness of outputs\n"
         "depends_on is a list of task ids that must complete before this task.\n"
-        "Keep the plan minimal and actionable. Maximum 8 tasks."
+        "Keep the plan minimal and actionable. Maximum 10 tasks."
     )
 
     def __init__(self, router: ModelRouter):

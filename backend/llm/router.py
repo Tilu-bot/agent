@@ -65,8 +65,11 @@ class ModelRouter:
         messages: list[dict[str, str]],
         options: dict[str, Any] | None = None,
     ) -> str:
-        model = self.select_model(task_type)
-        result = await self._client.chat(model=model, messages=messages, options=options)
+        tt = TaskType(task_type) if isinstance(task_type, str) else task_type
+        model = self.select_model(tt)
+        result = await self._client.chat(
+            model=model, messages=messages, options=options, task_type=tt.value
+        )
         return result.get("message", {}).get("content", "")
 
     async def generate(
@@ -75,6 +78,9 @@ class ModelRouter:
         prompt: str,
         options: dict[str, Any] | None = None,
     ) -> str:
-        model = self.select_model(task_type)
-        result = await self._client.generate(model=model, prompt=prompt, options=options)
+        tt = TaskType(task_type) if isinstance(task_type, str) else task_type
+        model = self.select_model(tt)
+        result = await self._client.generate(
+            model=model, prompt=prompt, options=options, task_type=tt.value
+        )
         return result.get("response", "")
