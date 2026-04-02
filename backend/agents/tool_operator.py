@@ -9,6 +9,18 @@ from backend.tools.bus import ToolBus, ToolInput
 
 _MAX_RETRIES = 3
 
+# Map agent roles to the most appropriate model type.
+# Coders get the code-specialised model; researchers and analysts get the
+# reasoning model; everything else uses the fast model.
+_ROLE_TASK_TYPE: dict[str, TaskType] = {
+    "coder": TaskType.code,
+    "researcher": TaskType.reasoning,
+    "analyst": TaskType.reasoning,
+    "writer": TaskType.reasoning,
+    "verifier": TaskType.fast,
+    "tool_operator": TaskType.fast,
+}
+
 
 class ToolOperator:
     """Executes tool calls using a ReAct retry loop.
@@ -16,6 +28,10 @@ class ToolOperator:
     On a tool failure or unparseable LLM response the error is fed back into
     the conversation so the model can self-correct.  Up to ``_MAX_RETRIES``
     attempts are made before the task is marked failed.
+
+    The model used for a task is selected based on the task's ``agent_role``
+    so that coding tasks get the code-specialised model and research/analysis
+    tasks get the reasoning model.
     """
 
     _SYSTEM_PROMPT = (
@@ -37,6 +53,9 @@ class ToolOperator:
     async def execute_task(
         self, task: Task, context: str = ""
     ) -> dict[str, Any]:
+        # Choose model based on agent role for better quality
+        task_type = _ROLE_TASK_TYPE.get(task.agent_role or "", TaskType.fast)
+
         messages: list[dict[str, str]] = [
             {"role": "system", "content": self._SYSTEM_PROMPT},
             {
@@ -53,7 +72,7 @@ class ToolOperator:
         tool_call: dict[str, Any] = {}
         tool_result = None
         for attempt in range(1, _MAX_RETRIES + 1):
-            raw = await self._router.chat(TaskType.fast, messages)
+            raw = await self._router.chat(task_type, messages)
             tool_call = self._parse_tool_call(raw)
 
             if tool_call.get("tool") is None:

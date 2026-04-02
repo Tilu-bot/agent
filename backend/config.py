@@ -59,6 +59,12 @@ class ServerConfig(BaseModel):
     max_concurrent_runs: int = 5
 
 
+class MemoryConfig(BaseModel):
+    enabled: bool = True
+    recall_limit: int = 3
+    max_parallel_tasks: int = 4
+
+
 class AppConfig(BaseModel):
     models: ModelsConfig = ModelsConfig()
     ollama: OllamaConfig = OllamaConfig()
@@ -66,6 +72,7 @@ class AppConfig(BaseModel):
     artifacts: ArtifactsConfig = ArtifactsConfig()
     database: DatabaseConfig = DatabaseConfig()
     server: ServerConfig = ServerConfig()
+    memory: MemoryConfig = MemoryConfig()
 
 
 @lru_cache

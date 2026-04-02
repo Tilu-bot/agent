@@ -99,3 +99,15 @@ class Artifact(Base):
     sha256: Mapped[Optional[str]] = mapped_column(String(64))
     provenance: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Memory(Base):
+    """Cross-run learnings that the planner uses as context for future runs."""
+
+    __tablename__ = "memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    run_id: Mapped[Optional[str]] = mapped_column(String(36))
+    goal_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    learnings: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

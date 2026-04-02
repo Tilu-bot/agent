@@ -5,14 +5,21 @@ import uuid
 from typing import Any
 
 from backend.llm.router import ModelRouter, TaskType
-from backend.models.db import EventKind, Run, RunStatus, Task, TaskStatus
-from backend.models.database import session_scope
+from backend.models.db import Task
 
 
 class Planner:
-    """Converts a high-level goal into a task DAG."""
+    """Converts a high-level goal into a task DAG.
 
-    SYSTEM_PROMPT = (
+    Improvements over the baseline:
+    * Receives the list of available tools so it can create tasks that map
+      cleanly onto real capabilities.
+    * Receives ``memories`` — short summaries of learnings from past runs —
+      so the planner can avoid strategies that failed before and reuse ones
+      that worked.
+    """
+
+    _BASE_SYSTEM = (
         "You are an expert project planner. Given a goal, produce a structured task plan.\n"
         "Return ONLY valid JSON in this exact format:\n"
         "{\n"
@@ -29,14 +36,45 @@ class Planner:
     def __init__(self, router: ModelRouter):
         self._router = router
 
-    async def create_plan(self, goal: str, run_id: str) -> list[Task]:
+    async def create_plan(
+        self,
+        goal: str,
+        run_id: str,
+        available_tools: list[str] | None = None,
+        memories: list[str] | None = None,
+    ) -> list[Task]:
+        system = self._build_system_prompt(available_tools, memories)
         messages = [
-            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": f"Goal: {goal}"},
         ]
         raw = await self._router.chat(TaskType.reasoning, messages)
         tasks = self._parse_plan(raw, run_id)
         return tasks
+
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
+    def _build_system_prompt(
+        self,
+        available_tools: list[str] | None,
+        memories: list[str] | None,
+    ) -> str:
+        parts = [self._BASE_SYSTEM]
+
+        if available_tools:
+            tool_list = ", ".join(available_tools)
+            parts.append(
+                f"\nAvailable tools: {tool_list}\n"
+                "Design each task so it maps to one of these tools or can be answered directly by the LLM."
+            )
+
+        if memories:
+            memory_block = "\n".join(f"  - {m}" for m in memories)
+            parts.append(
+                f"\nLearnings from past similar runs (use these to plan more effectively):\n{memory_block}"
+            )
+
+        return "\n".join(parts)
 
     def _parse_plan(self, raw: str, run_id: str) -> list[Task]:
         # Extract JSON from the response

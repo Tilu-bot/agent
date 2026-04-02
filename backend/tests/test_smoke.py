@@ -325,6 +325,282 @@ def test_topological_sort_cycle_safety():
     assert len(result) == 2   # all tasks returned, no hang
 
 
+def test_topological_waves_linear_chain():
+    """Linear dependency chain produces one task per wave."""
+    from backend.agents.orchestrator import Orchestrator
+    from backend.models.db import Task
+
+    def make(tid, deps):
+        t = Task()
+        t.id = tid
+        t.depends_on = deps
+        return t
+
+    t1 = make("t1", [])
+    t2 = make("t2", ["t1"])
+    t3 = make("t3", ["t2"])
+
+    waves = Orchestrator._topological_waves([t1, t2, t3])
+    assert len(waves) == 3
+    assert waves[0][0].id == "t1"
+    assert waves[1][0].id == "t2"
+    assert waves[2][0].id == "t3"
+
+
+def test_topological_waves_parallel_detection():
+    """Tasks with a shared dependency but not depending on each other are in the same wave."""
+    from backend.agents.orchestrator import Orchestrator
+    from backend.models.db import Task
+
+    def make(tid, deps):
+        t = Task()
+        t.id = tid
+        t.depends_on = deps
+        return t
+
+    # t1 → {t2, t3} → t4
+    t1 = make("t1", [])
+    t2 = make("t2", ["t1"])
+    t3 = make("t3", ["t1"])
+    t4 = make("t4", ["t2", "t3"])
+
+    waves = Orchestrator._topological_waves([t1, t2, t3, t4])
+    assert len(waves) == 3
+    assert len(waves[0]) == 1   # t1 alone
+    assert len(waves[1]) == 2   # t2 and t3 in parallel
+    assert len(waves[2]) == 1   # t4 alone
+
+
+def test_topological_waves_no_deps():
+    """All independent tasks go into a single wave."""
+    from backend.agents.orchestrator import Orchestrator
+    from backend.models.db import Task
+
+    def make(tid):
+        t = Task()
+        t.id = tid
+        t.depends_on = []
+        return t
+
+    tasks = [make(f"t{i}") for i in range(4)]
+    waves = Orchestrator._topological_waves(tasks)
+    assert len(waves) == 1
+    assert len(waves[0]) == 4
+
+
+def test_topological_waves_cycle_safety():
+    """_topological_waves must not hang on a cyclic graph."""
+    from backend.agents.orchestrator import Orchestrator
+    from backend.models.db import Task
+
+    def make(tid, deps):
+        t = Task()
+        t.id = tid
+        t.depends_on = deps
+        return t
+
+    t1 = make("t1", ["t2"])
+    t2 = make("t2", ["t1"])
+    waves = Orchestrator._topological_waves([t1, t2])
+    # Should not hang; all tasks should appear in some wave
+    flat = [t for w in waves for t in w]
+    assert len(flat) == 2
+
+
+def test_role_aware_model_routing():
+    """_ROLE_TASK_TYPE maps roles to the correct model tier."""
+    from backend.agents.tool_operator import _ROLE_TASK_TYPE
+    from backend.llm.router import TaskType
+
+    assert _ROLE_TASK_TYPE["coder"] == TaskType.code
+    assert _ROLE_TASK_TYPE["researcher"] == TaskType.reasoning
+    assert _ROLE_TASK_TYPE["analyst"] == TaskType.reasoning
+    assert _ROLE_TASK_TYPE["writer"] == TaskType.reasoning
+    assert _ROLE_TASK_TYPE["tool_operator"] == TaskType.fast
+    assert _ROLE_TASK_TYPE["verifier"] == TaskType.fast
+
+
+@pytest.mark.asyncio
+async def test_tool_operator_uses_role_model(monkeypatch):
+    """ToolOperator selects the code model for a coder task."""
+    from backend.agents.tool_operator import ToolOperator
+    from backend.llm.router import ModelRouter, TaskType
+    from backend.models.db import Task
+    from backend.tools.bus import ToolBus
+
+    used_task_types: list[TaskType] = []
+
+    class CapturingRouter:
+        async def chat(self, task_type, messages, options=None):
+            used_task_types.append(task_type)
+            return '{"tool": null, "result": "done"}'
+
+    task = Task()
+    task.title = "Write a Python script"
+    task.description = "hello world"
+    task.depends_on = []
+    task.agent_role = "coder"
+
+    op = ToolOperator(CapturingRouter(), ToolBus())
+    await op.execute_task(task, "")
+
+    assert used_task_types[0] == TaskType.code
+
+
+def test_planner_build_system_prompt_includes_tools():
+    """_build_system_prompt injects available tools into the system prompt."""
+    from backend.agents.planner import Planner
+    from backend.llm.router import ModelRouter
+
+    planner = Planner(ModelRouter())
+    prompt = planner._build_system_prompt(
+        available_tools=["web.search", "web.fetch"],
+        memories=None,
+    )
+    assert "web.search" in prompt
+    assert "web.fetch" in prompt
+
+
+def test_planner_build_system_prompt_includes_memories():
+    """_build_system_prompt injects past learnings into the system prompt."""
+    from backend.agents.planner import Planner
+    from backend.llm.router import ModelRouter
+
+    planner = Planner(ModelRouter())
+    prompt = planner._build_system_prompt(
+        available_tools=None,
+        memories=["Use DuckDuckGo for news; arXiv for papers."],
+    )
+    assert "DuckDuckGo" in prompt
+    assert "arXiv" in prompt
+
+
+def test_planner_parse_fallback():
+    """Planner._parse_plan falls back gracefully on invalid JSON."""
+    from backend.agents.planner import Planner
+    from backend.llm.router import ModelRouter
+
+    router = ModelRouter()
+    planner = Planner(router)
+    tasks = planner._parse_plan("not json at all", "run-123")
+    assert len(tasks) == 1
+    assert tasks[0].run_id == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_memory_store_recall_empty(tmp_path):
+    """MemoryStore.recall returns [] when no memories exist."""
+    import os
+    os.chdir(tmp_path)
+
+    from backend.models.database import init_db
+    from backend.agents.memory import MemoryStore
+    from backend.llm.router import ModelRouter
+
+    await init_db()
+    store = MemoryStore(ModelRouter())
+    memories = await store.recall("test goal")
+    assert memories == []
+
+
+@pytest.mark.asyncio
+async def test_memory_store_record_and_recall(tmp_path):
+    """Directly stored memories are returned by recall()."""
+    import os
+    os.chdir(tmp_path)
+    import uuid
+
+    from backend.models.database import init_db, session_scope
+    from backend.agents.memory import MemoryStore
+    from backend.models.db import Memory
+    from backend.llm.router import ModelRouter
+
+    await init_db()
+
+    # Insert a memory directly (bypassing LLM summarisation)
+    async with session_scope() as session:
+        m = Memory(
+            id=str(uuid.uuid4()),
+            run_id="test-run",
+            goal_summary="research AI papers news",
+            learnings="arXiv is the best source for AI papers. web.fetch reliably extracts content.",
+        )
+        session.add(m)
+
+    store = MemoryStore(ModelRouter())
+    memories = await store.recall("research AI papers")
+    assert len(memories) == 1
+    assert "arXiv" in memories[0]
+
+
+@pytest.mark.asyncio
+async def test_memory_store_relevance_ordering(tmp_path):
+    """More relevant memories (higher word overlap) appear first."""
+    import os
+    os.chdir(tmp_path)
+    import uuid
+
+    from backend.models.database import init_db, session_scope
+    from backend.agents.memory import MemoryStore
+    from backend.models.db import Memory
+    from backend.llm.router import ModelRouter
+
+    await init_db()
+
+    async with session_scope() as session:
+        session.add(Memory(
+            id=str(uuid.uuid4()),
+            run_id="r1",
+            goal_summary="write python code script",
+            learnings="shell.exec with python works well for code tasks.",
+        ))
+        session.add(Memory(
+            id=str(uuid.uuid4()),
+            run_id="r2",
+            goal_summary="summarise cooking recipes",
+            learnings="web.fetch retrieves recipe pages effectively.",
+        ))
+
+    store = MemoryStore(ModelRouter())
+    memories = await store.recall("write a python script", limit=2)
+    # The python-related memory should come first
+    assert "python" in memories[0].lower() or "code" in memories[0].lower()
+
+
+def test_tool_bus_describe_tools():
+    """ToolBus.describe_tools returns name→description for all registered tools."""
+    from backend.tools import create_default_tool_bus
+
+    bus = create_default_tool_bus()
+    descriptions = bus.describe_tools()
+    assert isinstance(descriptions, dict)
+    for name in bus.list_tools():
+        assert name in descriptions
+        assert isinstance(descriptions[name], str)
+        assert len(descriptions[name]) > 0
+
+
+def test_memory_config_defaults():
+    """MemoryConfig has the expected default values."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.memory.enabled is True
+    assert cfg.memory.recall_limit == 3
+    assert cfg.memory.max_parallel_tasks == 4
+
+
+def test_memory_model_exists():
+    """Memory table is declared in the ORM."""
+    from backend.models.db import Memory
+
+    m = Memory()
+    m.id = "test-id"
+    m.goal_summary = "test"
+    m.learnings = "test learnings"
+    assert m.id == "test-id"
+
+
 # ── New tests for 10/10 upgrades ──────────────────────────────────────────────
 
 @pytest.mark.asyncio

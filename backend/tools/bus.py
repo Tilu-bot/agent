@@ -65,6 +65,10 @@ class ToolBus:
     def list_tools(self) -> list[str]:
         return list(self._tools.keys())
 
+    def describe_tools(self) -> dict[str, str]:
+        """Return a mapping of tool name → description for all registered tools."""
+        return {name: tool.description for name, tool in self._tools.items()}
+
     async def call(self, tool_input: ToolInput) -> ToolResult:
         tool = self._tools.get(tool_input.tool_name)
         if tool is None:

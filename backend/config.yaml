@@ -20,7 +20,7 @@ tools:
     docker_image: "agentic-sandbox:latest"
     timeout_seconds: 30
     memory_limit: "256m"
-    cpu_quota: 50000  # 50% CPU
+    cpu_quota: 50000  # 50% of one CPU core (microseconds per 100ms period)
 
 artifacts:
   dir: ".agentic/artifacts"
