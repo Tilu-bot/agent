@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.config import get_config
@@ -29,6 +30,16 @@ async def init_db() -> None:
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Safe schema migrations for columns added after initial creation.
+        # SQLite does not support IF NOT EXISTS for ALTER TABLE, so we
+        # catch the error when the column already exists.
+        for stmt in [
+            "ALTER TABLE runs ADD COLUMN summary TEXT",
+        ]:
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass  # Column already exists — safe to ignore
 
 
 def get_session_factory() -> async_sessionmaker:

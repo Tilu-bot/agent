@@ -78,6 +78,33 @@ class DebateConfig(BaseModel):
     temperature: float = 0.8
 
 
+class ReflexionConfig(BaseModel):
+    """Reflexion loop — retry tasks that fail verification.
+
+    When enabled, any task whose verification confidence falls below
+    `min_confidence` (or is explicitly marked unverified) is retried up to
+    `max_retries` times.  Before each retry the Reflexion agent analyses the
+    failure and produces a corrective prompt that is injected into the next
+    ToolOperator call, allowing the model to self-correct.
+    """
+
+    enabled: bool = True
+    min_confidence: int = 60   # retry if verifier confidence < this
+    max_retries: int = 2
+
+
+class SynthesisConfig(BaseModel):
+    """Final answer synthesis.
+
+    When enabled, after all tasks complete the Synthesizer agent reads every
+    task result and produces a single coherent final answer that is stored in
+    the Run.summary field and emitted as a 'synthesis' event on the SSE
+    stream.
+    """
+
+    enabled: bool = True
+
+
 class AppConfig(BaseModel):
     models: ModelsConfig = ModelsConfig()
     ollama: OllamaConfig = OllamaConfig()
@@ -87,6 +114,8 @@ class AppConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     memory: MemoryConfig = MemoryConfig()
     debate: DebateConfig = DebateConfig()
+    reflexion: ReflexionConfig = ReflexionConfig()
+    synthesis: SynthesisConfig = SynthesisConfig()
 
 
 @lru_cache

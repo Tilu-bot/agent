@@ -58,6 +58,7 @@ class RunResponse(BaseModel):
     id: str
     goal: str
     status: str
+    summary: str | None
     created_at: str
     updated_at: str
 
@@ -67,6 +68,7 @@ class RunResponse(BaseModel):
             id=run.id,
             goal=run.goal,
             status=run.status,
+            summary=run.summary,
             created_at=run.created_at.isoformat(),
             updated_at=run.updated_at.isoformat(),
         )

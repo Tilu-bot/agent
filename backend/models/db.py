@@ -35,6 +35,8 @@ class EventKind(str, Enum):
     tool_result = "tool_result"
     plan_created = "plan_created"
     verification = "verification"
+    reflexion = "reflexion"
+    synthesis = "synthesis"
 
 
 class Run(Base):
@@ -43,6 +45,7 @@ class Run(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RunStatus] = mapped_column(String(20), default=RunStatus.pending)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

@@ -21,6 +21,19 @@ _ROLE_TASK_TYPE: dict[str, TaskType] = {
     "tool_operator": TaskType.fast,
 }
 
+_SYSTEM_HEADER = (
+    "You are a tool operator agent. Given a task, decide which tool to call "
+    "and what parameters to pass.\n"
+)
+
+_SYSTEM_FOOTER = (
+    "\nReturn ONLY valid JSON:\n"
+    '{"tool": "<tool_name>", "params": { ... }}\n'
+    "Or if no tool is needed:\n"
+    '{"tool": null, "result": "<direct answer>"}\n'
+    "If a previous attempt failed, learn from the error and try a different approach."
+)
+
 
 class ToolOperator:
     """Executes tool calls using a ReAct retry loop.
@@ -32,40 +45,56 @@ class ToolOperator:
     The model used for a task is selected based on the task's ``agent_role``
     so that coding tasks get the code-specialised model and research/analysis
     tasks get the reasoning model.
-    """
 
-    _SYSTEM_PROMPT = (
-        "You are a tool operator agent. Given a task, decide which tool to call "
-        "and what parameters to pass.\n"
-        "Available tools: filesystem.read, filesystem.write, web.fetch, "
-        "web.search, shell.exec\n"
-        "Return ONLY valid JSON:\n"
-        '{"tool": "<tool_name>", "params": { ... }}\n'
-        "Or if no tool is needed:\n"
-        '{"tool": null, "result": "<direct answer>"}\n'
-        "If a previous attempt failed, learn from the error and try a different approach."
-    )
+    The system prompt is built dynamically from the registered tools so the
+    LLM always has accurate, up-to-date descriptions of available capabilities.
+    """
 
     def __init__(self, router: ModelRouter, tool_bus: ToolBus):
         self._router = router
         self._bus = tool_bus
 
+    def _build_system_prompt(self) -> str:
+        """Build a rich system prompt from the live tool registry."""
+        tool_descriptions = self._bus.describe_tools()
+        if tool_descriptions:
+            tool_lines = "\n".join(
+                f"  • {name}: {desc}" for name, desc in tool_descriptions.items()
+            )
+            tools_section = f"Available tools:\n{tool_lines}"
+        else:
+            tools_section = "No tools are currently registered."
+        return _SYSTEM_HEADER + tools_section + _SYSTEM_FOOTER
+
     async def execute_task(
-        self, task: Task, context: str = ""
+        self, task: Task, context: str = "", reflection: str = ""
     ) -> dict[str, Any]:
+        """Execute *task*, optionally guided by a *reflection* correction.
+
+        Parameters
+        ----------
+        task:
+            The task to execute.
+        context:
+            JSON string of dependency results from previous tasks.
+        reflection:
+            A corrective prompt from the Reflexion agent (injected after a
+            failed verification so the model can self-correct).
+        """
         # Choose model based on agent role for better quality
         task_type = _ROLE_TASK_TYPE.get(task.agent_role or "", TaskType.fast)
 
+        user_content = (
+            f"Task: {task.title}\n"
+            f"Description: {task.description or ''}\n"
+            f"Context: {context}"
+        )
+        if reflection:
+            user_content += f"\n\nCorrection guidance: {reflection}"
+
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self._SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Task: {task.title}\n"
-                    f"Description: {task.description or ''}\n"
-                    f"Context: {context}"
-                ),
-            },
+            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "user", "content": user_content},
         ]
 
         last_error: str = ""

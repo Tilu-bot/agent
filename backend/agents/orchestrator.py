@@ -4,21 +4,23 @@ import asyncio
 import hashlib
 import json
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.debater import Debater
 from backend.agents.memory import MemoryStore
 from backend.agents.planner import Planner
+from backend.agents.reflexion import ReflexionAgent
+from backend.agents.synthesizer import Synthesizer
 from backend.agents.tool_operator import ToolOperator
 from backend.agents.verifier import Verifier
 from backend.agents.voter import Voter
 from backend.config import get_config
 from backend.llm.ollama_client import OllamaClient
-from backend.llm.router import ModelRouter, TaskType
+from backend.llm.router import ModelRouter
 from backend.models.database import get_session_factory
 from backend.models.db import Artifact, Event, EventKind, Run, RunStatus, Task, TaskStatus
 from backend.tools.bus import ToolBus
@@ -49,6 +51,8 @@ class Orchestrator:
         self._voter = Voter(self._router)
         self._tool_op = ToolOperator(self._router, tool_bus)
         self._verifier = Verifier(self._router)
+        self._reflexion = ReflexionAgent(self._router)
+        self._synthesizer = Synthesizer(self._router)
         self._memory = MemoryStore(self._router)
         self._cfg = get_config()
 
@@ -94,7 +98,7 @@ class Orchestrator:
             if self._cfg.debate.enabled:
                 await self._log_event(
                     run.id, EventKind.agent_message, "debater",
-                    f"Generating {self._cfg.debate.num_candidates} candidate plans…",
+                    f"Generating {self._cfg.debate.num_candidates} candidate plans...",
                 )
                 candidates = await self._debater.generate_candidates(
                     run.goal,
@@ -143,7 +147,26 @@ class Orchestrator:
             if run.status not in _TERMINAL and self._cfg.memory.enabled:
                 await self._memory.record_run(run.id, run.goal, completed)
 
-            # ── 5. Mark run complete ───────────────────────────────────────────
+            # ── 5. Synthesize a final answer from all task results ─────────────
+            await self._session.refresh(run)
+            if run.status not in _TERMINAL and self._cfg.synthesis.enabled:
+                all_tasks_result = await self._session.execute(
+                    select(Task).where(
+                        Task.run_id == run.id,
+                        Task.status == TaskStatus.completed,
+                    )
+                )
+                completed_tasks = list(all_tasks_result.scalars().all())
+                if completed_tasks:
+                    synthesis = await self._synthesizer.synthesize(run.goal, completed_tasks)
+                    if synthesis:
+                        run.summary = synthesis
+                        await self._log_event(
+                            run.id, EventKind.synthesis, "synthesizer",
+                            synthesis,
+                        )
+
+            # ── 6. Mark run complete ───────────────────────────────────────────
             await self._session.refresh(run)
             if run.status not in _TERMINAL:
                 run.status = RunStatus.completed
@@ -248,6 +271,64 @@ class Orchestrator:
                                   f"Verified={verification.get('verified')} "
                                   f"confidence={verification.get('confidence')}",
                                   verification, task_id=task.id, session=session)
+
+            # ── Reflexion loop: retry if verification failed or confidence low ─
+            cfg = self._cfg
+            reflexion_enabled = cfg.reflexion.enabled
+            min_confidence = cfg.reflexion.min_confidence
+            max_retries = cfg.reflexion.max_retries
+
+            for reflexion_attempt in range(max_retries):
+                verified_ok = (
+                    verification.get("verified") is True
+                    and int(verification.get("confidence", 0)) >= min_confidence
+                )
+                if verified_ok or not reflexion_enabled:
+                    break
+
+                # Generate a corrective prompt from the Reflexion agent
+                correction = await self._reflexion.reflect(
+                    task,
+                    str(outcome.get("result", "")),
+                    verification,
+                )
+                await self._log_event(
+                    run.id, EventKind.reflexion, "reflexion",
+                    f"Reflexion attempt {reflexion_attempt + 1}/{max_retries}: {correction[:200]}",
+                    {
+                        "attempt": reflexion_attempt + 1,
+                        "max_retries": max_retries,
+                        "correction": correction,
+                        "prev_confidence": verification.get("confidence"),
+                    },
+                    task_id=task.id,
+                    session=session,
+                )
+
+                # Re-execute with correction injected as additional context
+                outcome = await self._tool_op.execute_task(task, context, reflection=correction)
+
+                if outcome.get("tool_call"):
+                    await self._log_event(run.id, EventKind.tool_call, "tool_operator",
+                                          f"Calling {outcome['tool_call'].get('tool')}",
+                                          outcome["tool_call"], task_id=task.id, session=session)
+                if outcome.get("tool_result"):
+                    tr = outcome["tool_result"]
+                    await self._log_event(run.id, EventKind.tool_result, "tool_operator",
+                                          f"Tool result (success={tr.get('success')})",
+                                          tr, task_id=task.id, session=session)
+                    await self._store_artifact(run.id, task.id, tr, session=session)
+
+                # Re-verify after correction
+                verification = await self._verifier.verify(
+                    task,
+                    str(outcome.get("result", "")),
+                    outcome.get("tool_result"),
+                )
+                await self._log_event(run.id, EventKind.verification, "verifier",
+                                      f"Re-verified={verification.get('verified')} "
+                                      f"confidence={verification.get('confidence')}",
+                                      verification, task_id=task.id, session=session)
 
             task.result = str(outcome.get("result", ""))
             task.status = TaskStatus.completed

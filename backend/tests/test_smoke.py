@@ -1141,3 +1141,307 @@ async def test_export_training_data_filters_low_confidence(tmp_path):
         assert r.status_code == 200
         # Run has no tasks that meet the threshold → empty output
         assert r.text.strip() == ""
+
+
+# ── Reflexion agent tests ─────────────────────────────────────────────────────
+
+def test_reflexion_config_defaults():
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.reflexion.enabled is True
+    assert cfg.reflexion.min_confidence == 60
+    assert cfg.reflexion.max_retries == 2
+
+
+def test_reflexion_config_custom():
+    from backend.config import AppConfig
+
+    cfg = AppConfig.model_validate({"reflexion": {"enabled": False, "min_confidence": 80, "max_retries": 3}})
+    assert cfg.reflexion.enabled is False
+    assert cfg.reflexion.min_confidence == 80
+    assert cfg.reflexion.max_retries == 3
+
+
+@pytest.mark.asyncio
+async def test_reflexion_agent_returns_correction():
+    """ReflexionAgent returns a non-empty correction string from the LLM."""
+    from backend.agents.reflexion import ReflexionAgent
+    from backend.models.db import Task
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return "Try using web.search with a more specific query."
+
+    agent = ReflexionAgent(FakeRouter())
+    task = Task(
+        id="t1",
+        run_id="r1",
+        title="Research AI news",
+        description="Find the latest AI news",
+        agent_role="researcher",
+        depends_on=[],
+    )
+    correction = await agent.reflect(
+        task,
+        result="Nothing found",
+        verification={"verified": False, "confidence": 20, "notes": "No evidence found"},
+    )
+    assert correction == "Try using web.search with a more specific query."
+
+
+@pytest.mark.asyncio
+async def test_reflexion_agent_handles_error():
+    """ReflexionAgent returns empty string when LLM raises."""
+    from backend.agents.reflexion import ReflexionAgent
+    from backend.models.db import Task
+
+    class ErrorRouter:
+        async def chat(self, task_type, messages, options=None):
+            raise RuntimeError("LLM unavailable")
+
+    agent = ReflexionAgent(ErrorRouter())
+    task = Task(
+        id="t1",
+        run_id="r1",
+        title="Do something",
+        description="",
+        agent_role="researcher",
+        depends_on=[],
+    )
+    correction = await agent.reflect(task, result="bad", verification={"verified": False})
+    assert correction == ""
+
+
+# ── Synthesizer agent tests ───────────────────────────────────────────────────
+
+def test_synthesis_config_defaults():
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.synthesis.enabled is True
+
+
+def test_synthesis_config_disable():
+    from backend.config import AppConfig
+
+    cfg = AppConfig.model_validate({"synthesis": {"enabled": False}})
+    assert cfg.synthesis.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_returns_summary():
+    """Synthesizer produces a coherent answer from task results."""
+    from backend.agents.synthesizer import Synthesizer
+    from backend.models.db import Task
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return "AI is advancing rapidly with new models released every month."
+
+    synth = Synthesizer(FakeRouter())
+    tasks = [
+        Task(
+            id="t1",
+            run_id="r1",
+            title="Research task",
+            description="",
+            agent_role="researcher",
+            status="completed",
+            result="New AI models released in March 2026.",
+            depends_on=[],
+        )
+    ]
+    summary = await synth.synthesize("What is new in AI?", tasks)
+    assert "AI" in summary
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_skips_empty_results():
+    """Synthesizer returns empty string when all task results are empty."""
+    from backend.agents.synthesizer import Synthesizer
+    from backend.models.db import Task
+
+    called = False
+
+    class TrackingRouter:
+        async def chat(self, task_type, messages, options=None):
+            nonlocal called
+            called = True
+            return ""
+
+    synth = Synthesizer(TrackingRouter())
+    tasks = [
+        Task(
+            id="t1", run_id="r1", title="Empty task", description="",
+            agent_role="researcher", status="completed", result="", depends_on=[],
+        )
+    ]
+    summary = await synth.synthesize("goal", tasks)
+    # LLM should not be called if there are no results to synthesize
+    assert not called
+    assert summary == ""
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_handles_error():
+    """Synthesizer returns empty string on LLM error."""
+    from backend.agents.synthesizer import Synthesizer
+    from backend.models.db import Task
+
+    class ErrorRouter:
+        async def chat(self, task_type, messages, options=None):
+            raise RuntimeError("LLM down")
+
+    synth = Synthesizer(ErrorRouter())
+    tasks = [
+        Task(
+            id="t1", run_id="r1", title="T", description="",
+            agent_role="researcher", status="completed", result="some result", depends_on=[],
+        )
+    ]
+    result = await synth.synthesize("goal", tasks)
+    assert result == ""
+
+
+# ── ToolOperator dynamic tool descriptions ────────────────────────────────────
+
+def test_tool_operator_dynamic_system_prompt():
+    """ToolOperator builds system prompt from live tool registry."""
+    from backend.agents.tool_operator import ToolOperator
+    from backend.tools.bus import BaseTool, ToolBus, ToolResult
+    from backend.llm.router import ModelRouter
+
+    class FakeTool(BaseTool):
+        name = "my.special_tool"
+        description = "Does something special with data"
+
+        async def execute(self, params):
+            return ToolResult.from_success(self.name, {})
+
+    bus = ToolBus()
+    bus.register(FakeTool())
+    op = ToolOperator(ModelRouter(), bus)
+    prompt = op._build_system_prompt()
+    assert "my.special_tool" in prompt
+    assert "Does something special with data" in prompt
+
+
+def test_tool_operator_includes_reflection_in_prompt():
+    """execute_task injects reflection text into the user message."""
+    from backend.agents.tool_operator import ToolOperator
+    from backend.tools.bus import ToolBus
+    from backend.llm.router import ModelRouter
+    from backend.models.db import Task
+
+    captured_messages = []
+
+    class CapturingRouter:
+        def select_model(self, task_type):
+            return "test-model"
+
+        async def chat(self, task_type, messages, options=None):
+            captured_messages.extend(messages)
+            return '{"tool": null, "result": "done"}'
+
+    bus = ToolBus()
+    op = ToolOperator(CapturingRouter(), bus)
+    task = Task(
+        id="t1", run_id="r1", title="Task", description="desc",
+        agent_role="researcher", depends_on=[],
+    )
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(
+        op.execute_task(task, context="{}", reflection="Use a different URL next time")
+    )
+
+    user_msg = next(m for m in captured_messages if m["role"] == "user")
+    assert "Use a different URL next time" in user_msg["content"]
+
+
+# ── Run summary field ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_run_summary_field(tmp_path):
+    """Run model stores and retrieves summary correctly."""
+    import os, uuid
+    os.chdir(tmp_path)
+
+    from backend.models.database import init_db, session_scope
+    from backend.models.db import Run, RunStatus
+
+    await init_db()
+
+    run_id = str(uuid.uuid4())
+    async with session_scope() as session:
+        run = Run(id=run_id, goal="A goal", status=RunStatus.completed, summary="Final answer here.")
+        session.add(run)
+
+    async with session_scope() as session:
+        from sqlalchemy import select
+        result = await session.execute(select(Run).where(Run.id == run_id))
+        fetched = result.scalar_one_or_none()
+        assert fetched is not None
+        assert fetched.summary == "Final answer here."
+
+
+@pytest.mark.asyncio
+async def test_run_response_includes_summary(tmp_path):
+    """GET /api/runs/{id} returns summary field."""
+    import os, uuid
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db, get_session_factory
+    from backend.models.db import Run, RunStatus
+
+    await init_db()
+    factory = get_session_factory()
+    run_id = str(uuid.uuid4())
+    async with factory() as session:
+        run = Run(id=run_id, goal="A test goal", status=RunStatus.completed, summary="The final answer.")
+        session.add(run)
+        await session.commit()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get(f"/api/runs/{run_id}")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["summary"] == "The final answer."
+
+
+# ── Embedding-based memory recall ─────────────────────────────────────────────
+
+def test_cosine_similarity():
+    """Cosine similarity function is correct for known vectors."""
+    from backend.agents.memory import _cosine
+
+    # Identical vectors → similarity 1.0
+    assert abs(_cosine([1.0, 0.0], [1.0, 0.0]) - 1.0) < 1e-6
+
+    # Orthogonal vectors → similarity 0.0
+    assert abs(_cosine([1.0, 0.0], [0.0, 1.0])) < 1e-6
+
+    # Opposite vectors → similarity -1.0
+    assert abs(_cosine([1.0, 0.0], [-1.0, 0.0]) + 1.0) < 1e-6
+
+
+def test_cosine_zero_vector():
+    """Cosine similarity returns 0.0 for zero-length vectors."""
+    from backend.agents.memory import _cosine
+
+    assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
+    assert _cosine([], []) == 0.0
+
+
+# ── EventKind includes new kinds ─────────────────────────────────────────────
+
+def test_event_kind_includes_reflexion_and_synthesis():
+    from backend.models.db import EventKind
+
+    kinds = {k.value for k in EventKind}
+    assert "reflexion" in kinds
+    assert "synthesis" in kinds

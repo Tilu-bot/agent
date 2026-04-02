@@ -33,3 +33,21 @@ server:
   port: 8000
   cors_origins:
     - "http://localhost:3000"
+
+memory:
+  enabled: true
+  recall_limit: 3
+  max_parallel_tasks: 4
+
+debate:
+  enabled: false        # set to true to generate N plans and vote on the best
+  num_candidates: 3
+  temperature: 0.8
+
+reflexion:
+  enabled: true         # retry tasks that fail verification
+  min_confidence: 60    # confidence threshold (0-100); below this triggers a retry
+  max_retries: 2        # maximum number of reflexion-retry cycles per task
+
+synthesis:
+  enabled: true         # produce a final synthesized answer after all tasks complete

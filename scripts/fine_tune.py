@@ -222,7 +222,7 @@ def main() -> None:
         max_seq_length=args.max_seq_len,
     )
 
-    print("Starting training…")
+    print("Starting training...")
     trainer.train()
 
     print(f"Saving model to {output_dir}")

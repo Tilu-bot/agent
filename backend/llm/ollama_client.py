@@ -67,3 +67,14 @@ class OllamaClient:
                 return resp.status_code < 500
         except Exception:
             return False
+
+    async def embed(self, model: str, text: str) -> list[float]:
+        """Return an embedding vector for *text* using the given model.
+
+        Raises on any HTTP or network error so callers can fall back gracefully.
+        """
+        payload = {"model": model, "prompt": text}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{self._base_url}/api/embeddings", json=payload)
+            resp.raise_for_status()
+            return resp.json().get("embedding", [])
