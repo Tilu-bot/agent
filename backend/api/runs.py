@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.orchestrator import Orchestrator
 from backend.config import get_config
-from backend.models.db import Artifact, Event, Run, RunStatus, Task
+from backend.models.db import Artifact, Event, EventKind, Run, RunStatus, Task, TaskStatus
 from backend.models.database import get_session_factory
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -378,3 +378,114 @@ async def get_artifact_content(
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file missing on disk")
     return {"content": path.read_text()}
+
+
+# ── Training-data export ───────────────────────────────────────────────────────
+
+@router.get("/export/training-data")
+async def export_training_data(
+    min_confidence: int = 70,
+    format: str = "alpaca",
+    db: AsyncSession = Depends(get_db),
+):
+    """Export verified run data as JSONL for fine-tuning.
+
+    Query parameters
+    ----------------
+    min_confidence : int (default 70)
+        Only include tasks whose verifier confidence is >= this value.
+    format : "alpaca" | "sharegpt" (default "alpaca")
+        Output format.
+
+    Each line of the JSONL response is one training example.
+
+    Alpaca format::
+
+        {"instruction": "<goal>", "input": "", "output": "<plan+results JSON>"}
+
+    ShareGPT format::
+
+        {"conversations": [{"from": "human", "value": "<goal>"},
+                           {"from": "gpt",   "value": "<plan+results JSON>"}]}
+    """
+    if format not in ("alpaca", "sharegpt"):
+        raise HTTPException(status_code=400, detail="format must be 'alpaca' or 'sharegpt'")
+
+    min_confidence = max(0, min(100, min_confidence))
+
+    # ── Fetch all completed runs ───────────────────────────────────────────────
+    run_result = await db.execute(
+        select(Run).where(Run.status == RunStatus.completed).order_by(Run.created_at)
+    )
+    runs = run_result.scalars().all()
+
+    lines: list[str] = []
+
+    for run in runs:
+        # Fetch completed tasks for this run
+        task_result = await db.execute(
+            select(Task)
+            .where(Task.run_id == run.id, Task.status == TaskStatus.completed)
+            .order_by(Task.created_at)
+        )
+        tasks = task_result.scalars().all()
+        if not tasks:
+            continue
+
+        # Fetch verification events for this run
+        ev_result = await db.execute(
+            select(Event)
+            .where(Event.run_id == run.id, Event.kind == EventKind.verification)
+        )
+        verif_events = ev_result.scalars().all()
+
+        # Build task_id → verification data map
+        verif_map: dict[str, dict[str, Any]] = {}
+        for ev in verif_events:
+            if ev.task_id and ev.data:
+                verif_map[ev.task_id] = ev.data
+
+        # Filter tasks that pass the quality threshold
+        qualified_tasks = []
+        for task in tasks:
+            v = verif_map.get(task.id, {})
+            if v.get("verified") is True and int(v.get("confidence", 0)) >= min_confidence:
+                qualified_tasks.append(task)
+
+        if not qualified_tasks:
+            continue
+
+        # Build the output representation (plan + results)
+        output_tasks = [
+            {
+                "title": t.title,
+                "description": t.description,
+                "agent_role": t.agent_role,
+                "result": t.result,
+            }
+            for t in qualified_tasks
+        ]
+        output_str = json.dumps({"tasks": output_tasks}, ensure_ascii=False)
+
+        if format == "alpaca":
+            example = {
+                "instruction": run.goal,
+                "input": "",
+                "output": output_str,
+            }
+        else:  # sharegpt
+            example = {
+                "conversations": [
+                    {"from": "human", "value": run.goal},
+                    {"from": "gpt", "value": output_str},
+                ]
+            }
+
+        lines.append(json.dumps(example, ensure_ascii=False))
+
+    content = "\n".join(lines) + ("\n" if lines else "")
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="training_data.jsonl"'},
+    )

@@ -65,6 +65,19 @@ class MemoryConfig(BaseModel):
     max_parallel_tasks: int = 4
 
 
+class DebateConfig(BaseModel):
+    """Multi-candidate planning via LLM debate + voting.
+
+    When enabled, the Orchestrator generates `num_candidates` independent
+    plans for the same goal (each with `temperature` > 0) and then asks a
+    Voter agent to pick the best one before execution begins.
+    """
+
+    enabled: bool = False
+    num_candidates: int = 3
+    temperature: float = 0.8
+
+
 class AppConfig(BaseModel):
     models: ModelsConfig = ModelsConfig()
     ollama: OllamaConfig = OllamaConfig()
@@ -73,6 +86,7 @@ class AppConfig(BaseModel):
     database: DatabaseConfig = DatabaseConfig()
     server: ServerConfig = ServerConfig()
     memory: MemoryConfig = MemoryConfig()
+    debate: DebateConfig = DebateConfig()
 
 
 @lru_cache

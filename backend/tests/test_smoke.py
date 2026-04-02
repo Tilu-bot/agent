@@ -846,3 +846,298 @@ async def test_api_key_auth_open_when_not_set(tmp_path, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         r = await client.get("/api/runs")
         assert r.status_code == 200
+
+
+# ── Debate / Vote tests ───────────────────────────────────────────────────────
+
+def test_debate_config_defaults():
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert cfg.debate.enabled is False
+    assert cfg.debate.num_candidates == 3
+    assert cfg.debate.temperature == 0.8
+
+
+def test_debate_config_enable():
+    from backend.config import AppConfig
+
+    cfg = AppConfig.model_validate({"debate": {"enabled": True, "num_candidates": 5}})
+    assert cfg.debate.enabled is True
+    assert cfg.debate.num_candidates == 5
+
+
+@pytest.mark.asyncio
+async def test_debater_returns_candidates():
+    """Debater collects LLM responses as candidate strings."""
+    from backend.agents.debater import Debater
+
+    call_count = 0
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            nonlocal call_count
+            call_count += 1
+            return '{"tasks": [{"id": "t1", "title": "Do something", "description": "", "agent_role": "researcher", "depends_on": []}]}'
+
+    d = Debater(FakeRouter())
+    candidates = await d.generate_candidates("my goal", n=3, temperature=0.8)
+    assert call_count == 3
+    assert len(candidates) == 3
+
+
+@pytest.mark.asyncio
+async def test_debater_skips_exceptions():
+    """Debater silently drops failed LLM calls."""
+    from backend.agents.debater import Debater
+
+    call_count = 0
+
+    class FlakyRouter:
+        async def chat(self, task_type, messages, options=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("boom")
+            return '{"tasks": [{"id": "t1", "title": "T", "description": "", "agent_role": "researcher", "depends_on": []}]}'
+
+    d = Debater(FlakyRouter())
+    candidates = await d.generate_candidates("goal", n=3)
+    # call_count should be 3, but only 2 non-exceptional results
+    assert len(candidates) == 2
+
+
+@pytest.mark.asyncio
+async def test_voter_picks_winner():
+    """Voter calls LLM and picks the plan at the returned index."""
+    from backend.agents.voter import Voter
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"winner": 1, "reason": "Plan 1 is best"}'
+
+    candidates = [
+        '{"tasks": [{"id": "t1", "title": "Plan A task", "description": "", "agent_role": "researcher", "depends_on": []}]}',
+        '{"tasks": [{"id": "t1", "title": "Plan B task", "description": "", "agent_role": "analyst", "depends_on": []}]}',
+    ]
+    v = Voter(FakeRouter())
+    tasks = await v.select_best("some goal", "run-1", candidates)
+    assert len(tasks) == 1
+    assert tasks[0].title == "Plan B task"
+    assert tasks[0].agent_role == "analyst"
+
+
+@pytest.mark.asyncio
+async def test_voter_fallback_on_bad_json():
+    """Voter falls back to index 0 when LLM returns bad JSON."""
+    from backend.agents.voter import Voter
+
+    class BadRouter:
+        async def chat(self, task_type, messages, options=None):
+            return "I cannot decide."
+
+    candidates = [
+        '{"tasks": [{"id": "t1", "title": "Fallback task", "description": "", "agent_role": "researcher", "depends_on": []}]}',
+        '{"tasks": [{"id": "t1", "title": "Other task", "description": "", "agent_role": "analyst", "depends_on": []}]}',
+    ]
+    v = Voter(BadRouter())
+    tasks = await v.select_best("goal", "run-1", candidates)
+    assert tasks[0].title == "Fallback task"
+
+
+@pytest.mark.asyncio
+async def test_voter_single_candidate_skips_llm():
+    """Voter skips the LLM call when only one candidate is provided."""
+    from backend.agents.voter import Voter
+
+    call_count = 0
+
+    class TrackingRouter:
+        async def chat(self, task_type, messages, options=None):
+            nonlocal call_count
+            call_count += 1
+            return '{"winner": 0, "reason": "only one"}'
+
+    candidates = [
+        '{"tasks": [{"id": "t1", "title": "Solo", "description": "", "agent_role": "researcher", "depends_on": []}]}'
+    ]
+    v = Voter(TrackingRouter())
+    tasks = await v.select_best("goal", "run-1", candidates)
+    assert call_count == 0
+    assert tasks[0].title == "Solo"
+
+
+@pytest.mark.asyncio
+async def test_voter_empty_candidates():
+    """Voter returns empty list for empty candidates."""
+    from backend.agents.voter import Voter
+
+    class FakeRouter:
+        async def chat(self, task_type, messages, options=None):
+            return '{"winner": 0, "reason": ""}'
+
+    v = Voter(FakeRouter())
+    tasks = await v.select_best("goal", "run-1", [])
+    assert tasks == []
+
+
+# ── Training data export tests ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_export_training_data_empty(tmp_path):
+    """Export endpoint returns empty JSONL when there are no completed runs."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/runs/export/training-data")
+        assert r.status_code == 200
+        assert r.text.strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_export_training_data_bad_format(tmp_path):
+    """Export endpoint rejects unknown format strings."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/runs/export/training-data?format=invalid")
+        assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_export_training_data_with_verified_run(tmp_path):
+    """Export endpoint returns a JSONL line for a verified, completed run/task."""
+    import json
+    import os
+    import uuid
+    os.chdir(tmp_path)
+
+    from backend.models.database import init_db, get_session_factory
+    from backend.models.db import Run, RunStatus, Task, TaskStatus, Event, EventKind
+    from backend.main import create_app
+    from httpx import AsyncClient, ASGITransport
+
+    await init_db()
+
+    # Seed a completed run with a verified task
+    factory = get_session_factory()
+    run_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+    async with factory() as session:
+        run = Run(id=run_id, goal="Test goal for export", status=RunStatus.completed)
+        session.add(run)
+        task = Task(
+            id=task_id,
+            run_id=run_id,
+            title="Do the test",
+            description="desc",
+            agent_role="researcher",
+            status=TaskStatus.completed,
+            result="great result",
+            depends_on=[],
+        )
+        session.add(task)
+        # Verification event with high confidence
+        ev = Event(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            task_id=task_id,
+            kind=EventKind.verification,
+            agent_role="verifier",
+            content="verified",
+            data={"verified": True, "confidence": 90, "notes": "good"},
+        )
+        session.add(ev)
+        await session.commit()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Alpaca format
+        r = await client.get("/api/runs/export/training-data?format=alpaca&min_confidence=70")
+        assert r.status_code == 200
+        lines = [l for l in r.text.strip().split("\n") if l]
+        assert len(lines) == 1
+        example = json.loads(lines[0])
+        assert example["instruction"] == "Test goal for export"
+        assert example["input"] == ""
+        output = json.loads(example["output"])
+        assert output["tasks"][0]["title"] == "Do the test"
+        assert output["tasks"][0]["result"] == "great result"
+
+        # ShareGPT format
+        r2 = await client.get("/api/runs/export/training-data?format=sharegpt&min_confidence=70")
+        assert r2.status_code == 200
+        lines2 = [l for l in r2.text.strip().split("\n") if l]
+        ex2 = json.loads(lines2[0])
+        assert ex2["conversations"][0]["from"] == "human"
+        assert ex2["conversations"][0]["value"] == "Test goal for export"
+        assert ex2["conversations"][1]["from"] == "gpt"
+
+
+@pytest.mark.asyncio
+async def test_export_training_data_filters_low_confidence(tmp_path):
+    """Tasks below min_confidence are excluded from the export."""
+    import json
+    import os
+    import uuid
+    os.chdir(tmp_path)
+
+    from backend.models.database import init_db, get_session_factory
+    from backend.models.db import Run, RunStatus, Task, TaskStatus, Event, EventKind
+    from backend.main import create_app
+    from httpx import AsyncClient, ASGITransport
+
+    await init_db()
+
+    factory = get_session_factory()
+    run_id = str(uuid.uuid4())
+    task_id = str(uuid.uuid4())
+    async with factory() as session:
+        run = Run(id=run_id, goal="Low confidence goal", status=RunStatus.completed)
+        session.add(run)
+        task = Task(
+            id=task_id,
+            run_id=run_id,
+            title="Low conf task",
+            description="",
+            agent_role="analyst",
+            status=TaskStatus.completed,
+            result="meh",
+            depends_on=[],
+        )
+        session.add(task)
+        # Verification event with LOW confidence (40)
+        ev = Event(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            task_id=task_id,
+            kind=EventKind.verification,
+            agent_role="verifier",
+            content="low",
+            data={"verified": True, "confidence": 40, "notes": "weak"},
+        )
+        session.add(ev)
+        await session.commit()
+
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/runs/export/training-data?min_confidence=70")
+        assert r.status_code == 200
+        # Run has no tasks that meet the threshold → empty output
+        assert r.text.strip() == ""

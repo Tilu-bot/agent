@@ -10,10 +10,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.agents.debater import Debater
 from backend.agents.memory import MemoryStore
 from backend.agents.planner import Planner
 from backend.agents.tool_operator import ToolOperator
 from backend.agents.verifier import Verifier
+from backend.agents.voter import Voter
 from backend.config import get_config
 from backend.llm.ollama_client import OllamaClient
 from backend.llm.router import ModelRouter, TaskType
@@ -43,6 +45,8 @@ class Orchestrator:
         self._tool_bus = tool_bus
         self._router = ModelRouter()
         self._planner = Planner(self._router)
+        self._debater = Debater(self._router)
+        self._voter = Voter(self._router)
         self._tool_op = ToolOperator(self._router, tool_bus)
         self._verifier = Verifier(self._router)
         self._memory = MemoryStore(self._router)
@@ -85,13 +89,31 @@ class Orchestrator:
                     run.goal, limit=self._cfg.memory.recall_limit
                 )
 
-            # ── 2. Plan (tool-aware + memory-aware) ────────────────────────────
+            # ── 2. Plan (tool-aware + memory-aware, optionally via debate) ────
             tool_names = self._tool_bus.list_tools()
-            tasks = await self._planner.create_plan(
-                run.goal, run.id,
-                available_tools=tool_names,
-                memories=memories if memories else None,
-            )
+            if self._cfg.debate.enabled:
+                await self._log_event(
+                    run.id, EventKind.agent_message, "debater",
+                    f"Generating {self._cfg.debate.num_candidates} candidate plans…",
+                )
+                candidates = await self._debater.generate_candidates(
+                    run.goal,
+                    n=self._cfg.debate.num_candidates,
+                    temperature=self._cfg.debate.temperature,
+                    available_tools=tool_names,
+                    memories=memories if memories else None,
+                )
+                tasks = await self._voter.select_best(run.goal, run.id, candidates)
+                await self._log_event(
+                    run.id, EventKind.agent_message, "voter",
+                    f"Voter selected best plan from {len(candidates)} candidates.",
+                )
+            else:
+                tasks = await self._planner.create_plan(
+                    run.goal, run.id,
+                    available_tools=tool_names,
+                    memories=memories if memories else None,
+                )
             for task in tasks:
                 self._session.add(task)
             await self._session.commit()
