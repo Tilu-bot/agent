@@ -107,7 +107,7 @@ export const api = {
   getArtifactContent: (runId: string, artifactId: string) =>
     apiFetch<{ content: string }>(`/api/runs/${runId}/artifacts/${artifactId}/content`),
   artifactContentUrl: (runId: string, artifactId: string) =>
-    `${API_BASE}/api/runs/${runId}/artifacts/${artifactId}/content`,
+    `${API_BASE}/api/runs/${runId}/artifacts/${artifactId}/content?as_download=true`,
   exportTrainingData: (minConfidence = 70, format = "alpaca") =>
     `${API_BASE}/api/runs/export/training-data?min_confidence=${minConfidence}&format=${format}`,
   // ── Models ──────────────────────────────────────────────────────────────────

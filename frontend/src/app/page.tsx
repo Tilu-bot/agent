@@ -197,15 +197,19 @@ function ModelSettings({
           </div>
           {pullProgress && (
             <div className={styles.pullProgressWrap}>
-              <div
-                className={styles.pullProgressBar}
-                style={{ width: `${Math.min(100, Math.round((pullProgress.completed / pullProgress.total) * 100))}%` }}
-              />
-              <span className={styles.pullProgressLabel}>
-                {Math.round((pullProgress.completed / pullProgress.total) * 100)}%
-                &nbsp;·&nbsp;
-                {(pullProgress.completed / 1e9).toFixed(2)} / {(pullProgress.total / 1e9).toFixed(2)} GB
-              </span>
+              {(() => {
+                const pct = Math.min(100, Math.round((pullProgress.completed / pullProgress.total) * 100));
+                return (
+                  <>
+                    <div className={styles.pullProgressBar} style={{ width: `${pct}%` }} />
+                    <span className={styles.pullProgressLabel}>
+                      {pct}%
+                      &nbsp;·&nbsp;
+                      {(pullProgress.completed / 1e9).toFixed(2)} / {(pullProgress.total / 1e9).toFixed(2)} GB
+                    </span>
+                  </>
+                );
+              })()}
             </div>
           )}
           {pullStatus && (

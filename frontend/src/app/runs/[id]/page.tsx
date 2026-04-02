@@ -133,7 +133,7 @@ function ArtifactRow({
         <span className={styles.artifactMeta}>
           {artifact.sha256 ? `sha256:${artifact.sha256.slice(0, 12)}…` : ""}
         </span>
-        <button className={styles.expandBtn} onClick={download} title="Download file">
+        <button className={styles.expandBtn} onClick={download} title="Download file" aria-label="Download artifact">
           ⬇
         </button>
         <button className={styles.expandBtn} onClick={load} disabled={loading}>
