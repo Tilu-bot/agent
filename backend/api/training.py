@@ -101,7 +101,8 @@ async def _run_training(job_id: str, cfg: StartTrainingRequest) -> None:
     job["status"] = "running"
 
     # Step 1: Download training data from the export endpoint
-    data_path = Path(f"/tmp/agentic_training_{job_id}.jsonl")
+    import tempfile
+    data_path = Path(tempfile.gettempdir()) / f"agentic_training_{job_id}.jsonl"
     export_url = (
         f"{cfg.api_base.rstrip('/')}/api/runs/export/training-data"
         f"?format={cfg.format}&min_confidence={cfg.min_confidence}"
