@@ -257,6 +257,13 @@ export default function HomePage() {
   const [ollamaOk, setOllamaOk] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  const EXAMPLE_GOALS = [
+    "Research latest AI breakthroughs",
+    "Explain quantum computing simply",
+    "Compare top Python web frameworks",
+    "Summarize recent climate science",
+  ];
+
   useEffect(() => {
     loadRuns();
     checkHealth();
@@ -333,33 +340,60 @@ export default function HomePage() {
         <section className={styles.createSection}>
           <form onSubmit={handleCreate} className={styles.createForm}>
             <textarea
-              placeholder="Describe your goal… e.g. 'Research the latest news about AI and summarize it'"
+              placeholder="What do you want the agent to research or do? e.g. 'Research the latest developments in quantum computing and summarize the key findings'"
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
-              rows={3}
+              rows={4}
               className={styles.goalInput}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  handleCreate(e);
+                }
+              }}
             />
             {error && <div className={styles.error}>{error}</div>}
-            <button type="submit" disabled={loading || !goal.trim()}>
-              {loading ? "Creating…" : "▶ Run Agent"}
-            </button>
+            <div className={styles.formFooter}>
+              <div className={styles.suggestions}>
+                {EXAMPLE_GOALS.map((eg) => (
+                  <button
+                    key={eg}
+                    type="button"
+                    className={styles.suggestion}
+                    onClick={() => setGoal(eg)}
+                  >
+                    {eg}
+                  </button>
+                ))}
+              </div>
+              <span className={styles.kbHint}>⌘↵</span>
+              <button
+                type="submit"
+                disabled={loading || !goal.trim()}
+                className={styles.runBtn}
+                title="Run agent (Ctrl+Enter / ⌘+Enter)"
+              >
+                {loading ? "Creating…" : "▶ Run"}
+              </button>
+            </div>
           </form>
         </section>
 
         <section className={styles.runsSection}>
-          <h2>Runs</h2>
+          <h2>Recent Runs</h2>
           {runs.length === 0 && (
-            <p className={styles.empty}>No runs yet. Create one above.</p>
+            <p className={styles.empty}>No runs yet. Enter a goal above to get started.</p>
           )}
           <div className={styles.runsList}>
             {runs.map((run) => (
               <Link key={run.id} href={`/runs/${run.id}`} className={styles.runCard}>
-                <div className={styles.runGoal}>{run.goal}</div>
+                <div className={styles.runCardTop}>
+                  <div className={styles.runGoal}>{run.goal}</div>
+                  <span className={`badge badge-${run.status}`}>{run.status}</span>
+                </div>
                 {run.summary && (
-                  <div className={styles.runSummary}>{run.summary.slice(0, 160)}…</div>
+                  <div className={styles.runSummary}>{run.summary}</div>
                 )}
                 <div className={styles.runMeta}>
-                  <span className={`badge badge-${run.status}`}>{run.status}</span>
                   <span className={styles.runDate}>
                     {new Date(run.created_at).toLocaleString()}
                   </span>
