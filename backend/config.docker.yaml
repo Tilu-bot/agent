@@ -1,0 +1,10 @@
+# Config for Docker Compose — Ollama runs as a service named "ollama"
+# This file is baked into the backend image via the Dockerfile.
+
+ollama:
+  base_url: "http://ollama:11434"
+
+server:
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://frontend:3000"

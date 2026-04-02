@@ -1,0 +1,56 @@
+models:
+  fast: "llama3.2:3b"
+  reasoning: "llama3.2:3b"
+  code: "qwen2.5-coder:3b"
+  search: "llama3.2:3b"
+  math: "qwen2.5:3b"
+  vision: "llava:7b"
+  embedding: "nomic-embed-text"
+
+ollama:
+  base_url: "http://localhost:11434"
+
+tools:
+  filesystem:
+    allow_write: false  # set to true to enable gated writes
+    allowed_paths:
+      - ".agentic/workspace"
+  web:
+    timeout_seconds: 30
+    max_bytes: 524288  # 512KB
+  shell:
+    enabled: true
+    docker_image: "agentic-sandbox:latest"
+    timeout_seconds: 30
+    memory_limit: "256m"
+    cpu_quota: 50000  # 50% of one CPU core (microseconds per 100ms period)
+
+artifacts:
+  dir: ".agentic/artifacts"
+
+database:
+  url: "sqlite+aiosqlite:///.agentic/agentic.db"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:3000"
+
+memory:
+  enabled: true
+  recall_limit: 3
+  max_parallel_tasks: 4
+
+debate:
+  enabled: false        # set to true to generate N plans and vote on the best
+  num_candidates: 3
+  temperature: 0.8
+
+reflexion:
+  enabled: true         # retry tasks that fail verification
+  min_confidence: 60    # confidence threshold (0-100); below this triggers a retry
+  max_retries: 2        # maximum number of reflexion-retry cycles per task
+
+synthesis:
+  enabled: true         # produce a final synthesized answer after all tasks complete

@@ -1,0 +1,96 @@
+services:
+
+  # ── Ollama — local LLM server (free, open-source) ──────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment the lines below if you have an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── Model init — pulls required models on first start ──────────────────────
+  ollama-init:
+    image: curlimages/curl:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        echo 'Pulling llama3.2:3b...' &&
+        curl -sf http://ollama:11434/api/pull -d '{\"name\":\"llama3.2:3b\"}' &&
+        echo 'Pulling qwen2.5-coder:3b...' &&
+        curl -sf http://ollama:11434/api/pull -d '{\"name\":\"qwen2.5-coder:3b\"}' &&
+        echo 'Pulling nomic-embed-text...' &&
+        curl -sf http://ollama:11434/api/pull -d '{\"name\":\"nomic-embed-text\"}' &&
+        echo 'Models ready.'
+      "
+
+  # ── Sandbox image build ────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: agentic-sandbox:latest
+    entrypoint: ["true"]   # Build only; not run as a service
+
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./.agentic:/app/.agentic
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    # Pass a docker-specific config that points Ollama at the service name
+    command: >
+      python -m uvicorn backend.main:app
+      --host 0.0.0.0
+      --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:8000
+
+volumes:
+  ollama_data:
+    # Named volume so models persist between `docker compose down` / up cycles
