@@ -106,6 +106,8 @@ export const api = {
   getArtifacts: (id: string) => apiFetch<Artifact[]>(`/api/runs/${id}/artifacts`),
   getArtifactContent: (runId: string, artifactId: string) =>
     apiFetch<{ content: string }>(`/api/runs/${runId}/artifacts/${artifactId}/content`),
+  artifactContentUrl: (runId: string, artifactId: string) =>
+    `${API_BASE}/api/runs/${runId}/artifacts/${artifactId}/content`,
   exportTrainingData: (minConfidence = 70, format = "alpaca") =>
     `${API_BASE}/api/runs/export/training-data?min_confidence=${minConfidence}&format=${format}`,
   // ── Models ──────────────────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ export const api = {
     apiFetch<{ reset: boolean; slots: ModelSlots }>("/api/models/slots", {
       method: "DELETE",
     }),
+  pullModelStreamUrl: (model: string) =>
+    `${API_BASE}/api/models/pull?model=${encodeURIComponent(model)}`,
   // ── Training ────────────────────────────────────────────────────────────────
   startTraining: (config: {
     model?: string;

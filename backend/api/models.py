@@ -16,9 +16,11 @@ DELETE /api/models/slots
 """
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.config import (
@@ -101,3 +103,34 @@ async def reset_slots() -> dict[str, Any]:
     """Reset all runtime model slot overrides to the YAML config defaults."""
     clear_runtime_model_overrides()
     return {"reset": True, "slots": _current_slots()}
+
+
+@router.get("/pull")
+async def pull_model(model: str = Query(..., description="Ollama model tag to pull, e.g. llama3.2:3b")):
+    """Stream Ollama pull progress as Server-Sent Events.
+
+    Each SSE ``data:`` payload is a JSON object with at minimum a ``status``
+    field.  Downloading events also include ``total`` and ``completed`` byte
+    counts so the UI can render a progress bar.
+
+    The stream ends with ``{"status": "done"}`` after Ollama reports success,
+    or ``{"status": "error", "error": "..."}`` on failure.
+    """
+    ollama = OllamaClient()
+
+    async def _generate() -> AsyncGenerator[str, None]:
+        try:
+            async for event in ollama.pull_model(model):
+                yield f"data: {json.dumps(event)}\n\n"
+            yield f"data: {json.dumps({'status': 'done'})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'status': 'error', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

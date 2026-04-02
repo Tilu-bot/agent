@@ -118,6 +118,14 @@ function ArtifactRow({
     }
   }
 
+  function download() {
+    const url = `${api.artifactContentUrl(runId, artifact.id)}?download=1`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = artifact.name;
+    a.click();
+  }
+
   return (
     <div className={styles.artifactRow}>
       <div className={styles.artifactHeader}>
@@ -125,6 +133,9 @@ function ArtifactRow({
         <span className={styles.artifactMeta}>
           {artifact.sha256 ? `sha256:${artifact.sha256.slice(0, 12)}…` : ""}
         </span>
+        <button className={styles.expandBtn} onClick={download} title="Download file">
+          ⬇
+        </button>
         <button className={styles.expandBtn} onClick={load} disabled={loading}>
           {loading ? "…" : content !== null ? "Hide" : "View"}
         </button>

@@ -187,6 +187,95 @@
   text-decoration: none;
 }
 
+/* ── Pull a model ────────────────────────────────────────────────────────────*/
+
+.settingsDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.pullSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pullRow {
+  display: flex;
+  gap: 8px;
+}
+
+.pullInput {
+  flex: 1;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 6px 10px;
+}
+
+.pullInput:focus {
+  outline: 1px solid var(--accent);
+}
+
+.pullInput:disabled {
+  opacity: 0.5;
+}
+
+.pullBtn {
+  flex-shrink: 0;
+  background: var(--accent, #6c63ff);
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+
+.pullBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pullProgressWrap {
+  position: relative;
+  background: var(--surface2, #1e2030);
+  border-radius: 4px;
+  height: 20px;
+  overflow: hidden;
+}
+
+.pullProgressBar {
+  height: 100%;
+  background: var(--accent, #6c63ff);
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.pullProgressLabel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pullStatus {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pullOk { color: var(--green, #4caf7d); }
+.pullErr { color: var(--red, #ef5350); }
+
 /* ── Main content ────────────────────────────────────────────────────────────*/
 
 .main {

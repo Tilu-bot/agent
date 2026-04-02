@@ -79,6 +79,32 @@ class OllamaClient:
             data = resp.json()
             return [m["name"] for m in data.get("models", [])]
 
+    async def pull_model(self, model: str):
+        """Async generator that streams pull-progress events from Ollama.
+
+        Each yielded value is a dict parsed from one NDJSON line of the
+        ``/api/pull`` response, e.g.::
+
+            {"status": "pulling manifest"}
+            {"status": "downloading", "digest": "sha256:...",
+             "total": 4000000000, "completed": 123456789}
+            {"status": "success"}
+        """
+        payload = {"name": model, "stream": True}
+        async with httpx.AsyncClient(timeout=3600) as client:
+            async with client.stream(
+                "POST", f"{self._base_url}/api/pull", json=payload
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if line:
+                        import json
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            pass
+
     async def is_available(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5) as client:

@@ -25,6 +25,12 @@ function ModelSettings({
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // ── Pull a model ──────────────────────────────────────────────────────────
+  const [pullModel, setPullModel] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<{ completed: number; total: number } | null>(null);
+
   useEffect(() => {
     api.getModels().then((d) => {
       setModelsData(d);
@@ -60,6 +66,58 @@ function ModelSettings({
     } finally {
       setSaving(false);
     }
+  }
+
+  function handlePull() {
+    const modelName = pullModel.trim();
+    if (!modelName || pulling) return;
+    setPulling(true);
+    setPullStatus("Connecting…");
+    setPullProgress(null);
+
+    const es = new EventSource(api.pullModelStreamUrl(modelName));
+
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string) as {
+          status: string;
+          completed?: number;
+          total?: number;
+          error?: string;
+        };
+
+        if (data.status === "done") {
+          setPullStatus(`✓ "${modelName}" pulled successfully.`);
+          setPullProgress(null);
+          setPulling(false);
+          es.close();
+          // Refresh the model list so the new model appears in slot dropdowns.
+          api.getModels().then((d) => {
+            setModelsData(d);
+            setDraft((prev) => ({ ...d.slots, ...prev }));
+          }).catch(() => null);
+        } else if (data.status === "error") {
+          setPullStatus(`✗ Error: ${data.error ?? "unknown"}`);
+          setPullProgress(null);
+          setPulling(false);
+          es.close();
+        } else if (data.completed !== undefined && data.total !== undefined && data.total > 0) {
+          setPullStatus(`Downloading…`);
+          setPullProgress({ completed: data.completed, total: data.total });
+        } else {
+          setPullStatus(data.status);
+          setPullProgress(null);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    es.onerror = () => {
+      setPullStatus("✗ Connection lost. Check Ollama is running.");
+      setPulling(false);
+      es.close();
+    };
   }
 
   const slots = modelsData?.slot_names ?? [];
@@ -114,6 +172,48 @@ function ModelSettings({
         </div>
 
         {msg && <div className={styles.settingsMsg}>{msg}</div>}
+
+        <div className={styles.settingsDivider} />
+
+        {/* ── Pull a model ──────────────────────────────────────────────── */}
+        <div className={styles.pullSection}>
+          <label className={styles.slotLabel}>Pull a model from Ollama</label>
+          <div className={styles.pullRow}>
+            <input
+              className={styles.pullInput}
+              placeholder="e.g. llama3.2:3b"
+              value={pullModel}
+              onChange={(e) => setPullModel(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handlePull()}
+              disabled={pulling}
+            />
+            <button
+              className={styles.pullBtn}
+              onClick={handlePull}
+              disabled={pulling || !pullModel.trim()}
+            >
+              {pulling ? "Pulling…" : "⬇ Pull"}
+            </button>
+          </div>
+          {pullProgress && (
+            <div className={styles.pullProgressWrap}>
+              <div
+                className={styles.pullProgressBar}
+                style={{ width: `${Math.min(100, Math.round((pullProgress.completed / pullProgress.total) * 100))}%` }}
+              />
+              <span className={styles.pullProgressLabel}>
+                {Math.round((pullProgress.completed / pullProgress.total) * 100)}%
+                &nbsp;·&nbsp;
+                {(pullProgress.completed / 1e9).toFixed(2)} / {(pullProgress.total / 1e9).toFixed(2)} GB
+              </span>
+            </div>
+          )}
+          {pullStatus && (
+            <div className={`${styles.pullStatus} ${pullStatus.startsWith("✓") ? styles.pullOk : pullStatus.startsWith("✗") ? styles.pullErr : ""}`}>
+              {pullStatus}
+            </div>
+          )}
+        </div>
 
         <div className={styles.settingsActions}>
           <button onClick={handleReset} disabled={saving} className={styles.resetBtn}>

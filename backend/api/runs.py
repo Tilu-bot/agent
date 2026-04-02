@@ -378,7 +378,7 @@ async def get_artifacts(run_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{run_id}/artifacts/{artifact_id}/content")
 async def get_artifact_content(
-    run_id: str, artifact_id: str, db: AsyncSession = Depends(get_db)
+    run_id: str, artifact_id: str, download: bool = False, db: AsyncSession = Depends(get_db)
 ):
     artifact = await db.get(Artifact, artifact_id)
     if artifact is None or artifact.run_id != run_id:
@@ -390,6 +390,17 @@ async def get_artifact_content(
     path = Path(artifact.file_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file missing on disk")
+
+    if download:
+        from fastapi.responses import Response as FastAPIResponse
+        content_bytes = path.read_bytes()
+        safe_name = artifact.name.replace('"', "_")
+        return FastAPIResponse(
+            content=content_bytes,
+            media_type=artifact.content_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
+
     return {"content": path.read_text()}
 
 
