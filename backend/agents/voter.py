@@ -12,6 +12,7 @@ import json
 import uuid
 from typing import Any
 
+from backend.llm.json_utils import extract_json
 from backend.llm.router import ModelRouter, TaskType
 from backend.models.db import Task
 
@@ -65,38 +66,29 @@ class Voter:
                 ),
             },
         ]
-        raw = await self._router.chat(TaskType.fast, messages)
+        raw = await self._router.chat(TaskType.fast, messages, format="json")
         winner_index = self._parse_winner(raw, len(candidates))
         return self._parse_plan(candidates[winner_index], run_id)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     def _parse_winner(self, raw: str, num_candidates: int) -> int:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
-            return 0
-        try:
-            data = json.loads(raw[start:end])
-            index = int(data.get("winner", 0))
-            if 0 <= index < num_candidates:
-                return index
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
+        data = extract_json(raw, default={})
+        if isinstance(data, dict):
+            try:
+                index = int(data.get("winner", 0))
+                if 0 <= index < num_candidates:
+                    return index
+            except (ValueError, TypeError):
+                pass
         return 0
 
     def _parse_plan(self, raw: str, run_id: str) -> list[Task]:
         """Parse a raw plan JSON string into Task objects (mirrors Planner logic)."""
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
-            return [self._fallback_task(run_id)]
-
-        try:
-            data = json.loads(raw[start:end])
-            raw_tasks: list[dict[str, Any]] = data.get("tasks", [])
-        except json.JSONDecodeError:
-            raw_tasks = []
+        data = extract_json(raw, default={})
+        if not isinstance(data, dict):
+            data = {}
+        raw_tasks: list[dict[str, Any]] = data.get("tasks", [])
 
         if not raw_tasks:
             return [self._fallback_task(run_id)]

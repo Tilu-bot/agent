@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.llm.json_utils import extract_json
 from backend.llm.router import ModelRouter, TaskType
 from backend.models.db import Task
 
@@ -42,15 +43,11 @@ class Verifier:
                 ),
             },
         ]
-        raw = await self._router.chat(TaskType.fast, messages)
+        raw = await self._router.chat(TaskType.fast, messages, format="json")
         return self._parse(raw)
 
     def _parse(self, raw: str) -> dict[str, Any]:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
-            return {"verified": False, "confidence": 0, "notes": raw}
-        try:
-            return json.loads(raw[start:end])
-        except json.JSONDecodeError:
-            return {"verified": False, "confidence": 0, "notes": raw}
+        result = extract_json(raw, default={})
+        if isinstance(result, dict) and result:
+            return result
+        return {"verified": False, "confidence": 0, "notes": raw}

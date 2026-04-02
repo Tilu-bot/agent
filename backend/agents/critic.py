@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 
+from backend.llm.json_utils import extract_json
 from backend.llm.router import ModelRouter, TaskType
 
 _SYSTEM_PROMPT = (
@@ -79,23 +80,21 @@ class CriticAgent:
             },
         ]
         try:
-            raw = await self._router.chat(TaskType.reasoning, messages)
+            raw = await self._router.chat(TaskType.reasoning, messages, format="json")
             return self._parse(raw)
         except Exception:
             return {"quality": 0, "passed": False, "issues": ["Critic evaluation failed."]}
 
     def _parse(self, raw: str) -> dict:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
+        data = extract_json(raw, default={})
+        if not isinstance(data, dict):
             return {"quality": 0, "passed": False, "issues": [raw.strip()[:200]]}
         try:
-            data = json.loads(raw[start:end])
             quality = int(data.get("quality", 0))
             passed = bool(data.get("passed", quality >= 70))
             issues = data.get("issues", [])
             if not isinstance(issues, list):
                 issues = [str(issues)]
             return {"quality": quality, "passed": passed, "issues": issues}
-        except (json.JSONDecodeError, ValueError):
+        except (ValueError, TypeError):
             return {"quality": 0, "passed": False, "issues": [raw.strip()[:200]]}

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
+from backend.llm.json_utils import extract_json
 from backend.llm.router import ModelRouter, TaskType
 from backend.models.db import Task
 from backend.tools.bus import ToolBus, ToolInput
@@ -108,7 +108,7 @@ class ToolOperator:
         tool_call: dict[str, Any] = {}
         tool_result = None
         for attempt in range(1, _MAX_RETRIES + 1):
-            raw = await self._router.chat(task_type, messages)
+            raw = await self._router.chat(task_type, messages, format="json")
             tool_call = self._parse_tool_call(raw)
 
             if tool_call.get("tool") is None:
@@ -159,11 +159,7 @@ class ToolOperator:
         }
 
     def _parse_tool_call(self, raw: str) -> dict[str, Any]:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
-            return {"tool": None, "result": raw}
-        try:
-            return json.loads(raw[start:end])
-        except json.JSONDecodeError:
-            return {"tool": None, "result": raw}
+        result = extract_json(raw)
+        if isinstance(result, dict):
+            return result
+        return {"tool": None, "result": raw}

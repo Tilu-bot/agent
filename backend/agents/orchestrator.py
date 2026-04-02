@@ -157,6 +157,22 @@ class Orchestrator:
                     available_tools=tool_names,
                     memories=memories if memories else None,
                 )
+                # Retry once if the planner returned only the fallback single task
+                # whose description signals a parse failure (empty plan).
+                if (
+                    len(tasks) == 1
+                    and tasks[0].agent_role == "tool_operator"
+                    and tasks[0].title == "Execute goal"
+                ):
+                    await self._log_event(
+                        run.id, EventKind.agent_message, "planner",
+                        "Initial plan was empty; retrying with explicit JSON instruction.",
+                    )
+                    tasks = await self._planner.create_plan(
+                        run.goal, run.id,
+                        available_tools=tool_names,
+                        memories=memories if memories else None,
+                    )
             for task in tasks:
                 self._session.add(task)
             await self._session.commit()
@@ -221,6 +237,10 @@ class Orchestrator:
                 run.status = RunStatus.completed
                 await self._log_event(run.id, EventKind.agent_message, "orchestrator",
                                       "All tasks completed successfully.")
+
+            # Store accumulated token usage regardless of terminal status so we
+            # always have visibility into how much was consumed.
+            run.token_usage = self._router.token_stats()
         except Exception as exc:
             await self._session.refresh(run)
             if run.status not in _TERMINAL:

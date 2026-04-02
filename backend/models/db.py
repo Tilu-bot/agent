@@ -50,6 +50,9 @@ class Run(Base):
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RunStatus] = mapped_column(String(20), default=RunStatus.pending)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Token usage aggregated across all LLM calls for this run.
+    # Schema: {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+    token_usage: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

@@ -4,6 +4,7 @@ import json
 import uuid
 from typing import Any
 
+from backend.llm.json_utils import extract_json
 from backend.llm.router import ModelRouter, TaskType
 from backend.models.db import Task
 
@@ -58,7 +59,7 @@ class Planner:
             {"role": "system", "content": system},
             {"role": "user", "content": f"Goal: {goal}"},
         ]
-        raw = await self._router.chat(TaskType.reasoning, messages)
+        raw = await self._router.chat(TaskType.reasoning, messages, format="json")
         tasks = self._parse_plan(raw, run_id)
         return tasks
 
@@ -88,25 +89,10 @@ class Planner:
 
     def _parse_plan(self, raw: str, run_id: str) -> list[Task]:
         # Extract JSON from the response
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end == 0:
-            # Fallback: single task
-            return [
-                Task(
-                    id=str(uuid.uuid4()),
-                    run_id=run_id,
-                    title="Execute goal",
-                    description="No structured plan was generated; executing goal directly.",
-                    agent_role="tool_operator",
-                    depends_on=[],
-                )
-            ]
-        try:
-            data = json.loads(raw[start:end])
-            raw_tasks: list[dict[str, Any]] = data.get("tasks", [])
-        except json.JSONDecodeError:
-            raw_tasks = []
+        data = extract_json(raw, default={})
+        if not isinstance(data, dict):
+            data = {}
+        raw_tasks: list[dict[str, Any]] = data.get("tasks", [])
 
         if not raw_tasks:
             return [
@@ -114,7 +100,7 @@ class Planner:
                     id=str(uuid.uuid4()),
                     run_id=run_id,
                     title="Execute goal",
-                    description="Could not parse plan; executing goal directly.",
+                    description="No structured plan was generated; executing goal directly.",
                     agent_role="tool_operator",
                     depends_on=[],
                 )

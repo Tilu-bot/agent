@@ -67,6 +67,7 @@ class RunResponse(BaseModel):
     goal: str
     status: str
     summary: str | None
+    token_usage: dict | None
     created_at: str
     updated_at: str
 
@@ -77,6 +78,7 @@ class RunResponse(BaseModel):
             goal=run.goal,
             status=run.status,
             summary=run.summary,
+            token_usage=run.token_usage,
             created_at=run.created_at.isoformat(),
             updated_at=run.updated_at.isoformat(),
         )
@@ -389,6 +391,56 @@ async def get_artifact_content(
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact file missing on disk")
     return {"content": path.read_text()}
+
+
+@router.get("/{run_id}/stats")
+async def get_run_stats(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Return execution statistics for a single run.
+
+    Response fields
+    ---------------
+    run_id : str
+    status : str
+    token_usage : dict | None
+        ``{"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}``
+        or ``null`` if the run has not yet completed an LLM call.
+    task_counts : dict
+        Counts of tasks by status: ``{"total": int, "completed": int, ...}``
+    event_counts : dict
+        Counts of events by kind.
+    duration_seconds : float | None
+        Wall-clock seconds from ``created_at`` to ``updated_at``; ``null`` if
+        the run has not yet started.
+    """
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    task_result = await db.execute(select(Task).where(Task.run_id == run_id))
+    tasks = task_result.scalars().all()
+    task_counts: dict[str, int] = {"total": len(tasks)}
+    for task in tasks:
+        task_counts[task.status] = task_counts.get(task.status, 0) + 1
+
+    ev_result = await db.execute(select(Event).where(Event.run_id == run_id))
+    events = ev_result.scalars().all()
+    event_counts: dict[str, int] = {}
+    for ev in events:
+        event_counts[ev.kind] = event_counts.get(ev.kind, 0) + 1
+
+    duration: float | None = None
+    if run.created_at and run.updated_at:
+        delta = run.updated_at - run.created_at
+        duration = delta.total_seconds()
+
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "token_usage": run.token_usage,
+        "task_counts": task_counts,
+        "event_counts": event_counts,
+        "duration_seconds": duration,
+    }
 
 
 # ── Training-data export ───────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ class OllamaClient:
         stream: bool = False,
         options: dict[str, Any] | None = None,
         task_type: str | None = None,
+        format: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -37,6 +38,9 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
+        # format is a top-level Ollama field (e.g. "json") — not inside options.
+        if format:
+            payload["format"] = format
         timeout = self._timeout_for(task_type)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self._base_url}/api/chat", json=payload)
@@ -50,6 +54,7 @@ class OllamaClient:
         stream: bool = False,
         options: dict[str, Any] | None = None,
         task_type: str | None = None,
+        format: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -58,6 +63,8 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
+        if format:
+            payload["format"] = format
         timeout = self._timeout_for(task_type)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(f"{self._base_url}/api/generate", json=payload)

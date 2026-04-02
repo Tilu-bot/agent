@@ -431,7 +431,7 @@ async def test_tool_operator_uses_role_model(monkeypatch):
     used_task_types: list[TaskType] = []
 
     class CapturingRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             used_task_types.append(task_type)
             return '{"tool": null, "result": "done"}'
 
@@ -702,7 +702,7 @@ async def test_tool_operator_react_retry(tmp_path, monkeypatch):
 
     # Router always returns a call to a fictional tool
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"tool": "fake.tool", "params": {}}'
 
     # Tool always fails
@@ -737,7 +737,7 @@ async def test_tool_operator_react_succeeds_on_second_attempt():
     call_count = 0
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"tool": "fake.tool", "params": {}}'
 
     class SometimesBus(ToolBus):
@@ -875,7 +875,7 @@ async def test_debater_returns_candidates():
     call_count = 0
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             nonlocal call_count
             call_count += 1
             return '{"tasks": [{"id": "t1", "title": "Do something", "description": "", "agent_role": "researcher", "depends_on": []}]}'
@@ -894,7 +894,7 @@ async def test_debater_skips_exceptions():
     call_count = 0
 
     class FlakyRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             nonlocal call_count
             call_count += 1
             if call_count == 2:
@@ -913,7 +913,7 @@ async def test_voter_picks_winner():
     from backend.agents.voter import Voter
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"winner": 1, "reason": "Plan 1 is best"}'
 
     candidates = [
@@ -933,7 +933,7 @@ async def test_voter_fallback_on_bad_json():
     from backend.agents.voter import Voter
 
     class BadRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return "I cannot decide."
 
     candidates = [
@@ -953,7 +953,7 @@ async def test_voter_single_candidate_skips_llm():
     call_count = 0
 
     class TrackingRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             nonlocal call_count
             call_count += 1
             return '{"winner": 0, "reason": "only one"}'
@@ -973,7 +973,7 @@ async def test_voter_empty_candidates():
     from backend.agents.voter import Voter
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"winner": 0, "reason": ""}'
 
     v = Voter(FakeRouter())
@@ -1170,7 +1170,7 @@ async def test_reflexion_agent_returns_correction():
     from backend.models.db import Task
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return "Try using web.search with a more specific query."
 
     agent = ReflexionAgent(FakeRouter())
@@ -1197,7 +1197,7 @@ async def test_reflexion_agent_handles_error():
     from backend.models.db import Task
 
     class ErrorRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             raise RuntimeError("LLM unavailable")
 
     agent = ReflexionAgent(ErrorRouter())
@@ -1236,7 +1236,7 @@ async def test_synthesizer_returns_summary():
     from backend.models.db import Task
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return "AI is advancing rapidly with new models released every month."
 
     synth = Synthesizer(FakeRouter())
@@ -1265,7 +1265,7 @@ async def test_synthesizer_skips_empty_results():
     called = False
 
     class TrackingRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             nonlocal called
             called = True
             return ""
@@ -1290,7 +1290,7 @@ async def test_synthesizer_handles_error():
     from backend.models.db import Task
 
     class ErrorRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             raise RuntimeError("LLM down")
 
     synth = Synthesizer(ErrorRouter())
@@ -1340,7 +1340,7 @@ def test_tool_operator_includes_reflection_in_prompt():
         def select_model(self, task_type):
             return "test-model"
 
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             captured_messages.extend(messages)
             return '{"tool": null, "result": "done"}'
 
@@ -1900,7 +1900,7 @@ async def test_critic_agent_returns_quality_dict():
     from backend.agents.critic import CriticAgent
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"quality": 85, "passed": true, "issues": []}'
 
     critic = CriticAgent(FakeRouter())
@@ -1919,7 +1919,7 @@ async def test_critic_agent_parses_low_quality():
     from backend.agents.critic import CriticAgent
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"quality": 30, "passed": false, "issues": ["Answer is incomplete", "Missing key facts"]}'
 
     critic = CriticAgent(FakeRouter())
@@ -1935,7 +1935,7 @@ async def test_critic_agent_handles_empty_synthesis():
     from backend.agents.critic import CriticAgent
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return '{"quality": 100, "passed": true, "issues": []}'
 
     critic = CriticAgent(FakeRouter())
@@ -1951,7 +1951,7 @@ async def test_critic_agent_handles_bad_json():
     from backend.agents.critic import CriticAgent
 
     class FakeRouter:
-        async def chat(self, task_type, messages, options=None):
+        async def chat(self, task_type, messages, options=None, format=None):
             return "I cannot evaluate this."
 
     critic = CriticAgent(FakeRouter())
@@ -2161,3 +2161,343 @@ def test_context_budget_chars_default():
 
     cfg = AppConfig()
     assert cfg.memory.context_budget_chars == 6000
+
+
+# ── Fix 1: Structured JSON output (format="json") ────────────────────────────
+
+def test_ollama_client_accepts_format_parameter():
+    """OllamaClient.chat() accepts a format parameter."""
+    import inspect
+    from backend.llm.ollama_client import OllamaClient
+
+    sig = inspect.signature(OllamaClient.chat)
+    assert "format" in sig.parameters
+
+
+def test_ollama_client_format_added_to_payload():
+    """When format='json' is passed, it appears in the request payload."""
+    import inspect
+    from backend.llm.ollama_client import OllamaClient
+
+    src = inspect.getsource(OllamaClient.chat)
+    assert 'payload["format"]' in src or "format" in src
+
+
+def test_model_router_chat_accepts_format():
+    """ModelRouter.chat() accepts a format keyword argument."""
+    import inspect
+    from backend.llm.router import ModelRouter
+
+    sig = inspect.signature(ModelRouter.chat)
+    assert "format" in sig.parameters
+
+
+def test_tool_operator_passes_json_format():
+    """ToolOperator passes format='json' to the router."""
+    import inspect
+    from backend.agents.tool_operator import ToolOperator
+
+    src = inspect.getsource(ToolOperator.execute_task)
+    assert 'format="json"' in src
+
+
+def test_verifier_passes_json_format():
+    """Verifier passes format='json' to the router."""
+    import inspect
+    from backend.agents.verifier import Verifier
+
+    src = inspect.getsource(Verifier.verify)
+    assert 'format="json"' in src
+
+
+def test_planner_passes_json_format():
+    """Planner passes format='json' to the router."""
+    import inspect
+    from backend.agents.planner import Planner
+
+    src = inspect.getsource(Planner.create_plan)
+    assert 'format="json"' in src
+
+
+def test_critic_passes_json_format():
+    """CriticAgent passes format='json' to the router."""
+    import inspect
+    from backend.agents.critic import CriticAgent
+
+    src = inspect.getsource(CriticAgent.evaluate)
+    assert 'format="json"' in src
+
+
+def test_voter_passes_json_format():
+    """Voter passes format='json' to the router."""
+    import inspect
+    from backend.agents.voter import Voter
+
+    src = inspect.getsource(Voter.select_best)
+    assert 'format="json"' in src
+
+
+# ── Fix 2: Token usage tracking ────────────────────────────────────────────────
+
+def test_model_router_has_token_stats():
+    """ModelRouter has a token_stats() method."""
+    from backend.llm.router import ModelRouter
+
+    router = ModelRouter()
+    stats = router.token_stats()
+    assert "prompt_tokens" in stats
+    assert "completion_tokens" in stats
+    assert "total_tokens" in stats
+    assert stats["total_tokens"] == stats["prompt_tokens"] + stats["completion_tokens"]
+
+
+def test_model_router_token_stats_start_at_zero():
+    """A fresh ModelRouter starts with zero token counts."""
+    from backend.llm.router import ModelRouter
+
+    router = ModelRouter()
+    stats = router.token_stats()
+    assert stats["prompt_tokens"] == 0
+    assert stats["completion_tokens"] == 0
+    assert stats["total_tokens"] == 0
+
+
+def test_model_router_accumulates_tokens_from_response():
+    """ModelRouter.chat() accumulates tokens from the Ollama response."""
+    import asyncio
+    from backend.llm.router import ModelRouter
+
+    class FakeClient:
+        async def chat(self, **kwargs):
+            return {
+                "message": {"content": "hello"},
+                "prompt_eval_count": 10,
+                "eval_count": 5,
+            }
+
+    router = ModelRouter()
+    router._client = FakeClient()  # type: ignore[assignment]
+
+    async def _run():
+        await router.chat("fast", [{"role": "user", "content": "hi"}])
+        await router.chat("fast", [{"role": "user", "content": "again"}])
+
+    asyncio.run(_run())
+    stats = router.token_stats()
+    assert stats["prompt_tokens"] == 20   # 10 + 10
+    assert stats["completion_tokens"] == 10  # 5 + 5
+    assert stats["total_tokens"] == 30
+
+
+def test_run_model_has_token_usage_column():
+    """Run model has a token_usage JSON column."""
+    from backend.models.db import Run
+
+    run = Run()
+    assert hasattr(run, "token_usage")
+    assert run.token_usage is None
+
+
+@pytest.mark.asyncio
+async def test_run_token_usage_persisted(tmp_path):
+    """token_usage written to Run is readable from DB."""
+    import os
+    os.chdir(tmp_path)
+
+    from backend.models.database import init_db, session_scope
+    from backend.models.db import Run
+
+    await init_db()
+    import uuid
+    run_id = str(uuid.uuid4())
+
+    async with session_scope() as session:
+        run = Run(
+            id=run_id,
+            goal="token test",
+            token_usage={"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        )
+        session.add(run)
+
+    from sqlalchemy import select
+    async with session_scope() as session:
+        result = await session.execute(select(Run).where(Run.id == run_id))
+        run = result.scalar_one_or_none()
+        assert run is not None
+        assert run.token_usage is not None
+        assert run.token_usage["total_tokens"] == 150
+
+
+# ── Fix 3: extract_json utility ────────────────────────────────────────────────
+
+def test_extract_json_direct_parse():
+    """extract_json parses a plain JSON string directly."""
+    from backend.llm.json_utils import extract_json
+
+    result = extract_json('{"quality": 85, "passed": true}')
+    assert result == {"quality": 85, "passed": True}
+
+
+def test_extract_json_strips_markdown_fence():
+    """extract_json handles ```json code fences."""
+    from backend.llm.json_utils import extract_json
+
+    raw = '```json\n{"tool": "web.search", "params": {"q": "test"}}\n```'
+    result = extract_json(raw)
+    assert result["tool"] == "web.search"
+
+
+def test_extract_json_finds_outermost_braces():
+    """extract_json extracts JSON from prose that surrounds it."""
+    from backend.llm.json_utils import extract_json
+
+    raw = 'Here is the result: {"winner": 1, "reason": "Best plan"} — done.'
+    result = extract_json(raw)
+    assert result["winner"] == 1
+
+
+def test_extract_json_returns_default_on_failure():
+    """extract_json returns the default value when no JSON is found."""
+    from backend.llm.json_utils import extract_json
+
+    result = extract_json("not json at all", default={})
+    assert result == {}
+
+
+def test_extract_json_handles_empty_string():
+    """extract_json handles empty string gracefully."""
+    from backend.llm.json_utils import extract_json
+
+    result = extract_json("")
+    assert result is None
+
+
+def test_extract_json_handles_array():
+    """extract_json can extract a top-level JSON array."""
+    from backend.llm.json_utils import extract_json
+
+    result = extract_json('[1, 2, 3]')
+    assert result == [1, 2, 3]
+
+
+# ── Fix 4: Planning retry ──────────────────────────────────────────────────────
+
+def test_orchestrator_has_planning_retry_logic():
+    """Orchestrator _run_inner retries planning when plan is empty."""
+    import inspect
+    from backend.agents import orchestrator as orch_module
+
+    src = inspect.getsource(orch_module)
+    assert "Initial plan was empty" in src
+    assert "retrying" in src.lower() or "retry" in src.lower()
+
+
+# ── Fix 5: Token usage in API response ────────────────────────────────────────
+
+def test_run_response_includes_token_usage():
+    """RunResponse model includes a token_usage field."""
+    from backend.api.runs import RunResponse
+    import inspect
+
+    sig = inspect.signature(RunResponse.__init__)
+    # Pydantic model fields are reflected in the class annotations
+    assert "token_usage" in RunResponse.model_fields
+
+
+@pytest.mark.asyncio
+async def test_run_stats_endpoint(tmp_path):
+    """GET /api/runs/{id}/stats returns the expected shape."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create a run
+        resp = await client.post("/api/runs", json={"goal": "stats test goal"})
+        assert resp.status_code == 200
+        run_id = resp.json()["id"]
+
+        # Fetch stats
+        stats = await client.get(f"/api/runs/{run_id}/stats")
+        assert stats.status_code == 200
+        data = stats.json()
+        assert data["run_id"] == run_id
+        assert "status" in data
+        assert "task_counts" in data
+        assert "event_counts" in data
+        assert "token_usage" in data
+        assert "duration_seconds" in data
+
+
+@pytest.mark.asyncio
+async def test_global_stats_endpoint(tmp_path):
+    """GET /api/stats returns aggregate statistics."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_runs" in data
+        assert "runs_by_status" in data
+        assert "total_tasks" in data
+        assert "token_usage" in data
+        assert "total_tokens" in data["token_usage"]
+        assert "tracked_runs" in data["token_usage"]
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_includes_models(tmp_path):
+    """GET /api/health returns model list fields."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/api/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "status" in data
+        assert "ollama" in data
+        assert "models" in data
+        assert "models_available" in data
+        assert isinstance(data["models"], list)
+
+
+# ── Fix 6: run_response token_usage field included in GET /runs response ───────
+
+@pytest.mark.asyncio
+async def test_get_run_includes_token_usage(tmp_path):
+    """GET /api/runs/{id} response includes token_usage field."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/runs", json={"goal": "token field test"})
+        run_id = resp.json()["id"]
+        get_resp = await client.get(f"/api/runs/{run_id}")
+        assert get_resp.status_code == 200
+        assert "token_usage" in get_resp.json()
