@@ -4,6 +4,7 @@ export interface Run {
   id: string;
   goal: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  summary: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,7 +27,14 @@ export interface AgentEvent {
   id: string;
   run_id: string;
   task_id: string | null;
-  kind: "agent_message" | "tool_call" | "tool_result" | "plan_created" | "verification";
+  kind:
+    | "agent_message"
+    | "tool_call"
+    | "tool_result"
+    | "plan_created"
+    | "verification"
+    | "reflexion"
+    | "synthesis";
   agent_role: string | null;
   content: string | null;
   data: unknown;
@@ -44,6 +52,34 @@ export interface Artifact {
   created_at: string;
 }
 
+export interface ModelSlots {
+  fast: string;
+  reasoning: string;
+  code: string;
+  search: string;
+  math: string;
+  vision: string;
+  embedding: string;
+  [key: string]: string;
+}
+
+export interface ModelsResponse {
+  available: string[];
+  slots: ModelSlots;
+  slot_names: string[];
+  runtime_overrides: Record<string, string>;
+}
+
+export interface TrainingStatus {
+  job_id: string | null;
+  status: "idle" | "starting" | "running" | "completed" | "failed";
+  started_at: string | null;
+  finished_at: string | null;
+  config: Record<string, unknown> | null;
+  output_tail: string;
+  error: string;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
   if (!res.ok) {
@@ -54,11 +90,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  createRun: (goal: string) =>
+  // ── Runs ────────────────────────────────────────────────────────────────────
+  createRun: (goal: string, models?: Record<string, string>) =>
     apiFetch<Run>("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal }),
+      body: JSON.stringify({ goal, models: models ?? null }),
     }),
   listRuns: () => apiFetch<Run[]>("/api/runs"),
   getRun: (id: string) => apiFetch<Run>(`/api/runs/${id}`),
@@ -69,6 +106,42 @@ export const api = {
   getArtifacts: (id: string) => apiFetch<Artifact[]>(`/api/runs/${id}/artifacts`),
   getArtifactContent: (runId: string, artifactId: string) =>
     apiFetch<{ content: string }>(`/api/runs/${runId}/artifacts/${artifactId}/content`),
+  exportTrainingData: (minConfidence = 70, format = "alpaca") =>
+    `${API_BASE}/api/runs/export/training-data?min_confidence=${minConfidence}&format=${format}`,
+  // ── Models ──────────────────────────────────────────────────────────────────
+  getModels: () => apiFetch<ModelsResponse>("/api/models"),
+  updateModelSlots: (slots: Partial<ModelSlots>) =>
+    apiFetch<{ updated: Record<string, string>; slots: ModelSlots }>("/api/models/slots", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots }),
+    }),
+  resetModelSlots: () =>
+    apiFetch<{ reset: boolean; slots: ModelSlots }>("/api/models/slots", {
+      method: "DELETE",
+    }),
+  // ── Training ────────────────────────────────────────────────────────────────
+  startTraining: (config: {
+    model?: string;
+    output_dir?: string;
+    epochs?: number;
+    batch_size?: number;
+    lora_r?: number;
+    min_confidence?: number;
+    format?: string;
+    api_base?: string;
+  }) =>
+    apiFetch<{ job_id: string; status: string; message: string }>("/api/training/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }),
+  getTrainingStatus: () => apiFetch<TrainingStatus>("/api/training/status"),
+  listTrainingJobs: () =>
+    apiFetch<Array<{ job_id: string; status: string; started_at: string; model: string }>>(
+      "/api/training/jobs"
+    ),
+  // ── Health ──────────────────────────────────────────────────────────────────
   health: () => apiFetch<{ status: string; ollama: boolean }>("/api/health"),
   streamUrl: (id: string) => `${API_BASE}/api/runs/${id}/stream`,
 };

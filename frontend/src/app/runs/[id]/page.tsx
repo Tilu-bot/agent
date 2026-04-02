@@ -11,6 +11,8 @@ const KIND_ICON: Record<string, string> = {
   tool_result: "📦",
   plan_created: "📋",
   verification: "✅",
+  reflexion: "🔄",
+  synthesis: "🎯",
 };
 
 const ROLE_COLOR: Record<string, string> = {
@@ -20,6 +22,9 @@ const ROLE_COLOR: Record<string, string> = {
   verifier: "#4caf7d",
   researcher: "#ab47bc",
   coder: "#26c6da",
+  reflexion: "#ff8a65",
+  synthesizer: "#ffd54f",
+  mathematician: "#80deea",
 };
 
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
@@ -257,6 +262,14 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           )}
         </div>
       </header>
+
+      {/* ── Synthesis summary ─────────────────────────────────────────────── */}
+      {run.summary && (
+        <div className={styles.summaryBanner}>
+          <span className={styles.summaryLabel}>🎯 Summary</span>
+          <p className={styles.summaryText}>{run.summary}</p>
+        </div>
+      )}
 
       <nav className={styles.tabs}>
         {(["events", "tasks", "artifacts"] as const).map((t) => (

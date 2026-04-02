@@ -13,6 +13,9 @@ class ModelsConfig(BaseModel):
     fast: str = "llama3.2:3b"
     reasoning: str = "llama3.2:3b"
     code: str = "qwen2.5-coder:3b"
+    search: str = "llama3.2:3b"
+    math: str = "qwen2.5:3b"
+    vision: str = "llava:7b"
     embedding: str = "nomic-embed-text"
 
 
@@ -133,3 +136,24 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
 def get_config() -> AppConfig:
     return load_config()
+
+
+# ── Runtime model overrides ────────────────────────────────────────────────────
+# These override the YAML config at runtime without restarting the server.
+# Keys are model slot names (fast, reasoning, code, search, math, vision, embedding).
+_runtime_model_overrides: dict[str, str] = {}
+
+
+def get_runtime_model_overrides() -> dict[str, str]:
+    """Return the current in-memory model slot overrides."""
+    return _runtime_model_overrides
+
+
+def set_runtime_model_override(slot: str, model: str) -> None:
+    """Override a model slot at runtime.  Changes take effect immediately."""
+    _runtime_model_overrides[slot] = model
+
+
+def clear_runtime_model_overrides() -> None:
+    """Reset all runtime overrides back to the YAML config values."""
+    _runtime_model_overrides.clear()

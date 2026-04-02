@@ -42,10 +42,15 @@ class Orchestrator:
       SQLAlchemy session to avoid cross-task session conflicts.
     """
 
-    def __init__(self, session: AsyncSession, tool_bus: ToolBus):
+    def __init__(
+        self,
+        session: AsyncSession,
+        tool_bus: ToolBus,
+        run_models: dict[str, str] | None = None,
+    ):
         self._session = session
         self._tool_bus = tool_bus
-        self._router = ModelRouter()
+        self._router = ModelRouter(run_models=run_models)
         self._planner = Planner(self._router)
         self._debater = Debater(self._router)
         self._voter = Voter(self._router)
@@ -246,7 +251,7 @@ class Orchestrator:
 
         context = json.dumps({dep: completed.get(dep) for dep in (task.depends_on or [])})
         try:
-            outcome = await self._tool_op.execute_task(task, context)
+            outcome = await self._tool_op.execute_task(task, context, run_id=run.id)
 
             # Log tool call + result
             if outcome.get("tool_call"):
@@ -306,7 +311,7 @@ class Orchestrator:
                 )
 
                 # Re-execute with correction injected as additional context
-                outcome = await self._tool_op.execute_task(task, context, reflection=correction)
+                outcome = await self._tool_op.execute_task(task, context, reflection=correction, run_id=run.id)
 
                 if outcome.get("tool_call"):
                     await self._log_event(run.id, EventKind.tool_call, "tool_operator",

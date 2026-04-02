@@ -12,6 +12,7 @@ from typing import Any
 class ToolInput:
     tool_name: str
     params: dict[str, Any] = field(default_factory=dict)
+    run_id: str = ""  # injected by the system; not exposed to the LLM
 
 
 @dataclass
@@ -76,6 +77,11 @@ class ToolBus:
                 tool_input.tool_name, f"Unknown tool: {tool_input.tool_name}"
             )
         try:
-            return await tool.execute(tool_input.params)
+            # Inject system metadata into params so tools can access them
+            # without exposing them to the LLM's tool call JSON.
+            enriched = {**tool_input.params}
+            if tool_input.run_id:
+                enriched["_run_id"] = tool_input.run_id
+            return await tool.execute(enriched)
         except Exception as exc:
             return ToolResult.from_error(tool_input.tool_name, str(exc))

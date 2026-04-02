@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.models import router as models_router
 from backend.api.runs import router as runs_router
+from backend.api.training import router as training_router
 from backend.config import get_config
 from backend.models.database import init_db
 
@@ -21,7 +23,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     cfg = get_config()
-    app = FastAPI(title="Agentic", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Agentic", version="0.2.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -48,6 +50,8 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     app.include_router(runs_router)
+    app.include_router(models_router)
+    app.include_router(training_router)
 
     @app.get("/api/health")
     async def health():

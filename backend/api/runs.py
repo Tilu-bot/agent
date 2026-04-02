@@ -45,6 +45,14 @@ async def get_db() -> AsyncSession:
 
 class CreateRunRequest(BaseModel):
     goal: str = Field(..., min_length=1, description="Goal for the agent run")
+    models: dict[str, str] | None = Field(
+        None,
+        description=(
+            "Optional per-run model overrides. Keys are slot names "
+            "(fast, reasoning, code, search, math, vision). "
+            "Example: {\"reasoning\": \"qwen2.5:7b\", \"code\": \"qwen2.5-coder:7b\"}"
+        ),
+    )
 
     @field_validator("goal")
     @classmethod
@@ -165,6 +173,7 @@ async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db))
 
     tool_bus = create_default_tool_bus()
     run_id = run.id
+    _run_models = body.models or {}
 
     async def _run_background():
         async with _get_semaphore():
@@ -173,7 +182,7 @@ async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db))
                 bg_run = await bg_session.get(Run, run_id)
                 if bg_run is None:
                     return
-                orch = Orchestrator(bg_session, tool_bus)
+                orch = Orchestrator(bg_session, tool_bus, run_models=_run_models)
                 await orch.run(bg_run)
 
     task = asyncio.create_task(_run_background())

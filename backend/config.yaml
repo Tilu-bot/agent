@@ -2,6 +2,9 @@ models:
   fast: "llama3.2:3b"
   reasoning: "llama3.2:3b"
   code: "qwen2.5-coder:3b"
+  search: "llama3.2:3b"
+  math: "qwen2.5:3b"
+  vision: "llava:7b"
   embedding: "nomic-embed-text"
 
 ollama:

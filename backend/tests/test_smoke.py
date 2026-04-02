@@ -413,7 +413,7 @@ def test_role_aware_model_routing():
     from backend.llm.router import TaskType
 
     assert _ROLE_TASK_TYPE["coder"] == TaskType.code
-    assert _ROLE_TASK_TYPE["researcher"] == TaskType.reasoning
+    assert _ROLE_TASK_TYPE["researcher"] == TaskType.search
     assert _ROLE_TASK_TYPE["analyst"] == TaskType.reasoning
     assert _ROLE_TASK_TYPE["writer"] == TaskType.reasoning
     assert _ROLE_TASK_TYPE["tool_operator"] == TaskType.fast
@@ -1445,3 +1445,371 @@ def test_event_kind_includes_reflexion_and_synthesis():
     kinds = {k.value for k in EventKind}
     assert "reflexion" in kinds
     assert "synthesis" in kinds
+
+
+# ── New feature tests: expanded TaskTypes, tools, APIs ───────────────────────
+
+def test_model_router_new_task_types():
+    """ModelRouter now handles search, math, and vision task types."""
+    from backend.llm.router import ModelRouter, TaskType
+
+    router = ModelRouter()
+    assert router.select_model(TaskType.search)
+    assert router.select_model(TaskType.math)
+    assert router.select_model(TaskType.vision)
+
+
+def test_model_router_runtime_override():
+    """Runtime model overrides take precedence over config."""
+    from backend.config import set_runtime_model_override, clear_runtime_model_overrides
+    from backend.llm.router import ModelRouter, TaskType
+
+    set_runtime_model_override("fast", "my-special-model:7b")
+    try:
+        router = ModelRouter()
+        assert router.select_model(TaskType.fast) == "my-special-model:7b"
+    finally:
+        clear_runtime_model_overrides()
+
+
+def test_model_router_per_run_override():
+    """Per-run model overrides take highest precedence."""
+    from backend.config import set_runtime_model_override, clear_runtime_model_overrides
+    from backend.llm.router import ModelRouter, TaskType
+
+    set_runtime_model_override("code", "global-code:7b")
+    try:
+        # Per-run override beats global runtime override
+        router = ModelRouter(run_models={"code": "per-run-code:3b"})
+        assert router.select_model(TaskType.code) == "per-run-code:3b"
+    finally:
+        clear_runtime_model_overrides()
+
+
+def test_model_router_researcher_uses_search_type():
+    """researcher agent_role now maps to the search task type."""
+    from backend.agents.tool_operator import _ROLE_TASK_TYPE
+    from backend.llm.router import TaskType
+
+    assert _ROLE_TASK_TYPE["researcher"] == TaskType.search
+
+
+def test_config_has_new_model_slots():
+    """AppConfig.models includes search, math, and vision slots."""
+    from backend.config import AppConfig
+
+    cfg = AppConfig()
+    assert hasattr(cfg.models, "search")
+    assert hasattr(cfg.models, "math")
+    assert hasattr(cfg.models, "vision")
+    assert cfg.models.search
+    assert cfg.models.math
+    assert cfg.models.vision
+
+
+@pytest.mark.asyncio
+async def test_math_calculate_basic():
+    """math.calculate handles simple arithmetic."""
+    from backend.tools.math import MathCalculateTool
+
+    tool = MathCalculateTool()
+    result = await tool.execute({"expression": "2 + 2"})
+    assert result.success
+    assert "4" in str(result.output["result"])
+
+
+@pytest.mark.asyncio
+async def test_math_calculate_missing_expression():
+    """math.calculate returns error when expression is missing."""
+    from backend.tools.math import MathCalculateTool
+
+    tool = MathCalculateTool()
+    result = await tool.execute({})
+    assert not result.success
+    assert "expression" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_math_calculate_trig():
+    """math.calculate handles trigonometric functions."""
+    import math as _math
+    from backend.tools.math import MathCalculateTool
+
+    tool = MathCalculateTool()
+    result = await tool.execute({"expression": "sin(pi/2)"})
+    assert result.success
+    assert "1" in str(result.output["result"])
+
+
+@pytest.mark.asyncio
+async def test_math_calculate_blocks_dangerous_input():
+    """math.calculate rejects expressions with banned patterns."""
+    from backend.tools.math import MathCalculateTool
+
+    tool = MathCalculateTool()
+    result = await tool.execute({"expression": "__import__('os').system('ls')"})
+    assert not result.success
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_write_read():
+    """scratchpad.write and scratchpad.read round-trip correctly."""
+    from backend.tools.scratchpad import ScratchpadWriteTool, ScratchpadReadTool
+
+    write = ScratchpadWriteTool()
+    read = ScratchpadReadTool()
+
+    wr = await write.execute({"_run_id": "test-run-99", "key": "answer", "value": 42})
+    assert wr.success
+
+    rr = await read.execute({"_run_id": "test-run-99", "key": "answer"})
+    assert rr.success
+    assert rr.output["found"] is True
+    assert rr.output["value"] == 42
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_read_missing_key():
+    """scratchpad.read returns found=False for unknown keys."""
+    from backend.tools.scratchpad import ScratchpadReadTool
+
+    read = ScratchpadReadTool()
+    result = await read.execute({"_run_id": "test-run-absent", "key": "no-such-key"})
+    assert result.success
+    assert result.output["found"] is False
+    assert result.output["value"] is None
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_list():
+    """scratchpad.list returns all stored keys for the run."""
+    from backend.tools.scratchpad import ScratchpadWriteTool, ScratchpadListTool
+
+    write = ScratchpadWriteTool()
+    list_tool = ScratchpadListTool()
+
+    await write.execute({"_run_id": "list-run", "key": "k1", "value": "v1"})
+    await write.execute({"_run_id": "list-run", "key": "k2", "value": "v2"})
+
+    result = await list_tool.execute({"_run_id": "list-run"})
+    assert result.success
+    assert "k1" in result.output["keys"]
+    assert "k2" in result.output["keys"]
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_run_isolation():
+    """Scratchpad data is isolated per run_id."""
+    from backend.tools.scratchpad import ScratchpadWriteTool, ScratchpadReadTool
+
+    write = ScratchpadWriteTool()
+    read = ScratchpadReadTool()
+
+    await write.execute({"_run_id": "run-A", "key": "secret", "value": "only-for-A"})
+
+    result = await read.execute({"_run_id": "run-B", "key": "secret"})
+    assert result.success
+    assert result.output["found"] is False
+
+
+def test_default_tool_bus_includes_new_tools():
+    """create_default_tool_bus registers all new tools."""
+    from backend.tools import create_default_tool_bus
+
+    bus = create_default_tool_bus()
+    tools = bus.list_tools()
+    assert "math.calculate" in tools
+    assert "scratchpad.write" in tools
+    assert "scratchpad.read" in tools
+    assert "scratchpad.list" in tools
+    assert "document.parse" in tools
+    assert "image.analyze" in tools
+
+
+def test_tool_input_has_run_id_field():
+    """ToolInput dataclass now carries a run_id field."""
+    from backend.tools.bus import ToolInput
+
+    ti = ToolInput(tool_name="test.tool", params={}, run_id="my-run-123")
+    assert ti.run_id == "my-run-123"
+
+
+@pytest.mark.asyncio
+async def test_tool_bus_injects_run_id_into_params():
+    """ToolBus.call injects _run_id into tool params."""
+    from backend.tools.bus import ToolBus, ToolInput, BaseTool, ToolResult
+
+    received_params: dict = {}
+
+    class CaptureTool(BaseTool):
+        name = "capture.tool"
+        description = "Captures params"
+
+        async def execute(self, params):
+            received_params.update(params)
+            return ToolResult.from_success(self.name, {})
+
+    bus = ToolBus()
+    bus.register(CaptureTool())
+
+    await bus.call(ToolInput(tool_name="capture.tool", params={"x": 1}, run_id="injected-run"))
+    assert received_params.get("_run_id") == "injected-run"
+    assert received_params.get("x") == 1
+
+
+@pytest.mark.asyncio
+async def test_models_api_returns_slots(tmp_path):
+    """GET /api/models returns slot names and available models list."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.get("/api/models")
+        assert r.status_code == 200
+        data = r.json()
+        assert "slots" in data
+        assert "available" in data
+        assert "slot_names" in data
+        slots = data["slots"]
+        for slot in ("fast", "reasoning", "code", "search", "math", "vision", "embedding"):
+            assert slot in slots
+
+
+@pytest.mark.asyncio
+async def test_models_api_update_slots(tmp_path):
+    """PUT /api/models/slots updates model slot assignments."""
+    import os
+    os.chdir(tmp_path)
+
+    from backend.config import clear_runtime_model_overrides
+    clear_runtime_model_overrides()
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/models/slots",
+            json={"slots": {"fast": "tinyllama:1.1b"}},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["slots"]["fast"] == "tinyllama:1.1b"
+
+    clear_runtime_model_overrides()
+
+
+@pytest.mark.asyncio
+async def test_models_api_update_invalid_slot(tmp_path):
+    """PUT /api/models/slots returns 400 for unknown slot names."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.put(
+            "/api/models/slots",
+            json={"slots": {"nonexistent_slot": "some-model"}},
+        )
+        assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_models_api_reset_slots(tmp_path):
+    """DELETE /api/models/slots clears runtime overrides."""
+    import os
+    os.chdir(tmp_path)
+
+    from backend.config import set_runtime_model_override, clear_runtime_model_overrides, get_config
+    clear_runtime_model_overrides()
+    set_runtime_model_override("fast", "override-model:7b")
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.delete("/api/models/slots")
+        assert r.status_code == 200
+        data = r.json()
+        # After reset, the slot should be back to config default
+        assert data["slots"]["fast"] == get_config().models.fast
+
+    clear_runtime_model_overrides()
+
+
+@pytest.mark.asyncio
+async def test_create_run_with_model_override(tmp_path):
+    """POST /api/runs accepts an optional models field for per-run override."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/runs",
+            json={
+                "goal": "Test with model override",
+                "models": {"fast": "tinyllama:1.1b", "code": "qwen2.5-coder:1.5b"},
+            },
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["id"]
+        assert data["goal"] == "Test with model override"
+
+
+@pytest.mark.asyncio
+async def test_training_status_idle(tmp_path):
+    """GET /api/training/status returns idle when no job has run."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+    import backend.api.training as training_module
+
+    await init_db()
+    app = create_app()
+
+    # Reset training state
+    original = training_module._current_job_id
+    training_module._current_job_id = None
+    training_module._jobs.clear()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.get("/api/training/status")
+            assert r.status_code == 200
+            data = r.json()
+            assert data["status"] == "idle"
+            assert data["job_id"] is None
+    finally:
+        training_module._current_job_id = original

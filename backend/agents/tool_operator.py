@@ -10,15 +10,16 @@ from backend.tools.bus import ToolBus, ToolInput
 _MAX_RETRIES = 3
 
 # Map agent roles to the most appropriate model type.
-# Coders get the code-specialised model; researchers and analysts get the
-# reasoning model; everything else uses the fast model.
+# Coders get the code-specialised model; researchers get the search model;
+# analysts and writers get the reasoning model; everything else uses fast.
 _ROLE_TASK_TYPE: dict[str, TaskType] = {
     "coder": TaskType.code,
-    "researcher": TaskType.reasoning,
+    "researcher": TaskType.search,
     "analyst": TaskType.reasoning,
     "writer": TaskType.reasoning,
     "verifier": TaskType.fast,
     "tool_operator": TaskType.fast,
+    "mathematician": TaskType.math,
 }
 
 _SYSTEM_HEADER = (
@@ -67,7 +68,7 @@ class ToolOperator:
         return _SYSTEM_HEADER + tools_section + _SYSTEM_FOOTER
 
     async def execute_task(
-        self, task: Task, context: str = "", reflection: str = ""
+        self, task: Task, context: str = "", reflection: str = "", run_id: str = ""
     ) -> dict[str, Any]:
         """Execute *task*, optionally guided by a *reflection* correction.
 
@@ -80,6 +81,9 @@ class ToolOperator:
         reflection:
             A corrective prompt from the Reflexion agent (injected after a
             failed verification so the model can self-correct).
+        run_id:
+            The ID of the current run — passed to tools that need per-run
+            isolation (e.g. scratchpad).
         """
         # Choose model based on agent role for better quality
         task_type = _ROLE_TASK_TYPE.get(task.agent_role or "", TaskType.fast)
@@ -116,6 +120,7 @@ class ToolOperator:
             tool_input = ToolInput(
                 tool_name=tool_call["tool"],
                 params=tool_call.get("params", {}),
+                run_id=run_id,
             )
             tool_result = await self._bus.call(tool_input)
 
