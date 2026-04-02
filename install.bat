@@ -12,8 +12,15 @@ echo.
 :: ── Require Administrator (needed to install software) ─────────────────────
 net session >nul 2>&1
 if errorlevel 1 (
-    echo  [!] Requesting administrator access to install software...
+    echo  [!] Administrator rights are needed to install software.
     echo.
+    echo      A Windows security prompt (UAC) will appear asking you to allow
+    echo      changes.  Click YES / Allow.
+    echo.
+    echo      A NEW installer window will then open and continue automatically.
+    echo      This window will close -- please watch the new one.
+    echo.
+    pause
     powershell -Command "Start-Process '%~f0' -Verb RunAs"
     exit /b
 )
@@ -136,9 +143,10 @@ if not exist "backend\.venv" (
 ) else (
     echo  [OK] Python environment already exists.
 )
-echo  Installing Python packages (may take ~1 min on first run)...
-backend\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-backend\.venv\Scripts\pip.exe install -r backend\requirements.txt --quiet
+echo  Installing Python packages (may take a few minutes on first run)...
+echo  (You will see package names scroll by - this is normal.)
+backend\.venv\Scripts\python.exe -m pip install --upgrade pip
+backend\.venv\Scripts\pip.exe install -r backend\requirements.txt
 if errorlevel 1 ( echo  [ERROR] Package install failed. & pause & exit /b 1 )
 echo  [OK] Python packages installed.
 
@@ -149,9 +157,10 @@ echo.
 :: ════════════════════════════════════════════════════════════════════════════
 :: 6. NODE.JS FRONTEND DEPENDENCIES
 :: ════════════════════════════════════════════════════════════════════════════
-echo  Installing web packages (may take ~1 min on first run)...
+echo  Installing web packages (may take a few minutes on first run)...
+echo  (You will see package names scroll by - this is normal.)
 cd frontend
-call npm install --silent
+call npm install
 if errorlevel 1 ( cd .. & echo  [ERROR] npm install failed. & pause & exit /b 1 )
 cd ..
 echo  [OK] Web packages installed.
