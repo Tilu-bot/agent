@@ -735,3 +735,114 @@
   text-align: center;
 }
 
+
+/* ── Terminal output (tool_result with stdout/stderr) ───────────────────────*/
+
+.terminal {
+  margin-top: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+}
+
+.termStdout {
+  margin: 0;
+  padding: 10px 12px;
+  background: #0d1117;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.termStderr {
+  margin: 0;
+  padding: 10px 12px;
+  background: #1a0a0a;
+  color: #f85149;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.exitCode {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-subtle);
+}
+
+.exitCode[data-ok="true"] {
+  color: var(--green, #4caf7d);
+}
+
+.exitCode[data-ok="false"] {
+  color: var(--red, #ef5350);
+}
+
+/* ── Shell command block (tool_call preview) ────────────────────────────────*/
+
+.commandBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  color: #c9d1d9;
+  overflow-x: auto;
+}
+
+.cmdPrompt {
+  color: #3fb950;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* ── Python code block (tool_call preview) ──────────────────────────────────*/
+
+.toolCodeBlock {
+  margin-top: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toolCodeHeader {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--surface3);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 26px;
+}
+
+.toolCodeLang {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+.toolCodePre {
+  margin: 0;
+  padding: 10px 12px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre;
+}

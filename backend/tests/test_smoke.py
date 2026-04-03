@@ -2605,3 +2605,87 @@ def test_event_kind_has_thinking():
 
     assert EventKind.thinking == "thinking"
     assert "thinking" in {k.value for k in EventKind}
+
+
+# ── Chat classify endpoint ────────────────────────────────────────────────────
+
+def test_classify_direct_greeting():
+    """Short greetings should be classified as direct."""
+    from backend.api.chat import _classify_message
+
+    assert _classify_message("hi") == "direct"
+    assert _classify_message("hello") == "direct"
+    assert _classify_message("What is machine learning?") == "direct"
+    assert _classify_message("Explain how GPT works") == "direct"
+
+
+def test_classify_agentic_patterns():
+    """Messages with agentic keywords should be classified as agentic."""
+    from backend.api.chat import _classify_message
+
+    assert _classify_message("Research the latest AI papers and summarize them") == "agentic"
+    assert _classify_message("Search the web for Python tutorials") == "agentic"
+    assert _classify_message("Run the code and show the output") == "agentic"
+    assert _classify_message("Create a file named output.txt with the results") == "agentic"
+
+
+def test_classify_direct_code_request():
+    """Simple code writing requests should be direct (no tool needed)."""
+    from backend.api.chat import _classify_message
+
+    assert _classify_message("Write a simple Python script to sort a list") == "direct"
+    assert _classify_message("Write a function to reverse a string") == "direct"
+
+
+@pytest.mark.asyncio
+async def test_classify_endpoint_direct(tmp_path):
+    """POST /api/chat/classify returns 'direct' for simple questions."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/chat/classify",
+            json={"messages": [{"role": "user", "content": "What is Python?"}]},
+        )
+        assert r.status_code == 200
+        assert r.json()["mode"] == "direct"
+
+
+@pytest.mark.asyncio
+async def test_classify_endpoint_agentic(tmp_path):
+    """POST /api/chat/classify returns 'agentic' for tool-needing queries."""
+    import os
+    os.chdir(tmp_path)
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/chat/classify",
+            json={"messages": [{"role": "user", "content": "Search the web for the latest news on AI"}]},
+        )
+        assert r.status_code == 200
+        assert r.json()["mode"] == "agentic"
+
+
+@pytest.mark.asyncio
+async def test_classify_endpoint_route_registered(tmp_path):
+    """The /api/chat/classify route must be registered in the FastAPI app."""
+    import os
+    os.chdir(tmp_path)
+    from backend.main import create_app
+
+    app = create_app()
+    paths = [r.path for r in app.routes]
+    assert "/api/chat/classify" in paths

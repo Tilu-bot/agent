@@ -34,7 +34,10 @@ export interface AgentEvent {
     | "plan_created"
     | "verification"
     | "reflexion"
-    | "synthesis";
+    | "synthesis"
+    | "thinking"
+    | "critic"
+    | "error";
   agent_role: string | null;
   content: string | null;
   data: unknown;
@@ -152,6 +155,17 @@ export const api = {
     ),
   // ── Chat ────────────────────────────────────────────────────────────────────
   /**
+   * Classify the last user message as "direct" (simple Q&A) or "agentic"
+   * (requires tools, web search, file I/O, or multi-step planning).
+   * No LLM call is made — this is a fast heuristic.
+   */
+  classifyChat: (messages: ChatMessage[]) =>
+    apiFetch<{ mode: "direct" | "agentic" }>("/api/chat/classify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    }),
+  /**
    * Send messages and receive the full assistant reply as JSON.
    * Use `chatStream` instead for a streaming/typing-indicator experience.
    */
@@ -168,6 +182,7 @@ export const api = {
   /**
    * Open a streaming POST request and call `onToken` for each yielded token.
    * Resolves when the stream ends or `onError` is called on error.
+   * Pass an `AbortSignal` to cancel the request mid-stream.
    */
   chatStream: async (
     messages: ChatMessage[],
@@ -175,7 +190,8 @@ export const api = {
     onDone: () => void,
     onError: (err: string) => void,
     model?: string,
-    taskType = "fast"
+    taskType = "fast",
+    signal?: AbortSignal
   ): Promise<void> => {
     let resp: Response;
     try {
@@ -183,8 +199,10 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages, model: model ?? null, task_type: taskType }),
+        signal,
       });
     } catch (e) {
+      if ((e as Error).name === "AbortError") return;
       onError(String(e));
       return;
     }
@@ -195,22 +213,27 @@ export const api = {
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (data === "[DONE]") { onDone(); return; }
-        try {
-          const obj = JSON.parse(data) as { token?: string; error?: string };
-          if (obj.error) { onError(obj.error); return; }
-          if (obj.token) onToken(obj.token);
-        } catch { /* ignore */ }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") { onDone(); return; }
+          try {
+            const obj = JSON.parse(data) as { token?: string; error?: string };
+            if (obj.error) { onError(obj.error); return; }
+            if (obj.token) onToken(obj.token);
+          } catch { /* ignore malformed lines */ }
+        }
       }
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") onError(String(e));
+      return;
     }
     onDone();
   },

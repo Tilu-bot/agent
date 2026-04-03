@@ -162,6 +162,66 @@ function EventRow({ event }: { event: AgentEvent }) {
   else if (isToolResult) contentClass += " " + styles.toolResultContent;
   else if (isThinking) contentClass += " " + styles.thinkingContent;
 
+  // Rich rendering helpers
+  const d = event.data as Record<string, unknown> | null | undefined;
+
+  /** Render a shell command or Python code from a tool_call event. */
+  function ToolCallPreview() {
+    if (!d) return null;
+    const tool = d.tool as string | undefined;
+    const params = d.params as Record<string, unknown> | undefined;
+    if (tool === "shell.exec" && params?.command) {
+      return (
+        <div className={styles.commandBlock}>
+          <span className={styles.cmdPrompt}>$</span>
+          <code>{String(params.command)}</code>
+        </div>
+      );
+    }
+    if (tool === "python.run" && params?.code) {
+      return (
+        <div className={styles.toolCodeBlock}>
+          <div className={styles.toolCodeHeader}>
+            <span className={styles.toolCodeLang}>python</span>
+          </div>
+          <pre className={styles.toolCodePre}><code>{String(params.code)}</code></pre>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  /** Render stdout / stderr / exit_code from a tool_result event. */
+  function TerminalOutput() {
+    if (!d) return null;
+    const stdout = (d.data as Record<string, unknown>)?.stdout as string | undefined
+      ?? d.stdout as string | undefined;
+    const stderr = (d.data as Record<string, unknown>)?.stderr as string | undefined
+      ?? d.stderr as string | undefined;
+    const exitCode = (d.data as Record<string, unknown>)?.exit_code
+      ?? d.exit_code;
+
+    if (!stdout && !stderr && exitCode === undefined) return null;
+    return (
+      <div className={styles.terminal}>
+        {stdout && stdout.trim() && (
+          <pre className={styles.termStdout}>{stdout}</pre>
+        )}
+        {stderr && stderr.trim() && (
+          <pre className={styles.termStderr}>{stderr}</pre>
+        )}
+        {exitCode !== undefined && exitCode !== null && (
+          <div
+            className={styles.exitCode}
+            data-ok={exitCode === 0}
+          >
+            exit {String(exitCode)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={styles.timelineEntry}>
       <div className={styles.timelineLine} />
@@ -190,6 +250,12 @@ function EventRow({ event }: { event: AgentEvent }) {
         </div>
 
         <div className={contentClass}>{event.content}</div>
+
+        {/* Tool call: show command / code preview */}
+        {isToolCall && <ToolCallPreview />}
+
+        {/* Tool result: show terminal output */}
+        {isToolResult && <TerminalOutput />}
 
         {Boolean(event.data) && (
           <>

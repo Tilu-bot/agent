@@ -448,3 +448,206 @@
 .errorClose:hover {
   opacity: 1;
 }
+
+/* ── Cancel button ───────────────────────────────────────────────────────────*/
+
+.cancelBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--surface3, #1e2133);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  padding: 0;
+}
+
+.cancelBtn:hover {
+  color: var(--red);
+  border-color: var(--red);
+  opacity: 1;
+}
+
+/* ── Route mode tag ──────────────────────────────────────────────────────────*/
+
+.routeTag {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.route_direct {
+  background: rgba(66, 165, 245, 0.1);
+  color: var(--blue, #42a5f5);
+  border: 1px solid rgba(66, 165, 245, 0.25);
+}
+
+.route_agentic {
+  background: rgba(108, 99, 255, 0.1);
+  color: var(--accent-light, #a09bff);
+  border: 1px solid rgba(108, 99, 255, 0.25);
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────────────*/
+
+.codeBlock {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle, #232640);
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.codeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--surface3, #1e2133);
+  border-bottom: 1px solid var(--border-subtle, #232640);
+  min-height: 28px;
+}
+
+.codeLang {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-subtle, #5c6384);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  text-transform: lowercase;
+}
+
+.copyBtn {
+  background: transparent;
+  border: 1px solid var(--border-subtle, #232640);
+  color: var(--text-subtle, #5c6384);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  margin-left: auto;
+}
+
+.copyBtn:hover {
+  color: var(--text-muted);
+  border-color: var(--border);
+  opacity: 1;
+}
+
+.codePre {
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 12px 14px !important;
+  font-size: 12px !important;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ── Inline code ─────────────────────────────────────────────────────────────*/
+
+.inlineCode {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 12px;
+  color: var(--accent-light, #a09bff);
+}
+
+/* ── Markdown table ──────────────────────────────────────────────────────────*/
+
+.tableWrap {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.mdTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.mdTable th,
+.mdTable td {
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle, #232640);
+  text-align: left;
+}
+
+.mdTable th {
+  background: var(--surface3, #1e2133);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mdTable tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+/* ── Agent run inline bubble ─────────────────────────────────────────────────*/
+
+.agentRunBubble {
+  padding: 4px 0;
+}
+
+.agentRunHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.agentRunIcon {
+  font-size: 16px;
+}
+
+.agentRunLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.agentRunLink {
+  font-size: 12px;
+  color: var(--accent-light, #a09bff);
+  text-decoration: none;
+  margin-left: auto;
+}
+
+.agentRunLink:hover {
+  text-decoration: underline;
+}
+
+.agentRunThinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+/* Animations */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1;   }
+}
