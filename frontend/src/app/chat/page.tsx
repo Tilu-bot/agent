@@ -168,7 +168,6 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }
 
-  const isTyping = sending && messages.at(-1)?.streaming && messages.at(-1)?.content === "";
 
   return (
     <div className={styles.page}>
