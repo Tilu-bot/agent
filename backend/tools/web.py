@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -15,6 +18,49 @@ try:
     _HAS_TRAFILATURA = True
 except ImportError:  # pragma: no cover
     _HAS_TRAFILATURA = False
+
+# Private / reserved IP networks — requests to these are blocked to prevent SSRF.
+_PRIVATE_NETS = [
+    ipaddress.ip_network("127.0.0.0/8"),     # loopback
+    ipaddress.ip_network("10.0.0.0/8"),      # RFC 1918
+    ipaddress.ip_network("172.16.0.0/12"),   # RFC 1918
+    ipaddress.ip_network("192.168.0.0/16"),  # RFC 1918
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local
+    ipaddress.ip_network("100.64.0.0/10"),   # shared address (RFC 6598)
+    ipaddress.ip_network("::1/128"),         # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),        # IPv6 unique local
+    ipaddress.ip_network("fe80::/10"),       # IPv6 link-local
+]
+
+
+def _resolves_to_private(host: str) -> bool:
+    """Return True if *host* (name or IP) resolves to a private/reserved address.
+
+    This runs synchronously and should be called inside ``run_in_executor``.
+    """
+    # First try to parse as a literal IP.
+    try:
+        ip = ipaddress.ip_address(host)
+        return any(ip in net for net in _PRIVATE_NETS)
+    except ValueError:
+        pass
+
+    # Hostname — resolve all addresses and check each.
+    try:
+        addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        # Cannot resolve — not a known private address, allow the request to
+        # proceed; httpx will surface a connection error if unreachable.
+        return False
+
+    for entry in addr_info:
+        try:
+            ip = ipaddress.ip_address(entry[4][0])
+            if any(ip in net for net in _PRIVATE_NETS):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _extract_text(html: str, url: str) -> str:
@@ -37,6 +83,27 @@ class WebFetchTool(BaseTool):
         url: str = params.get("url", "")
         if not url:
             return ToolResult.from_error(self.name, "Missing 'url' parameter")
+
+        # Only allow http(s) schemes.
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return ToolResult.from_error(
+                self.name, f"Blocked: unsupported URL scheme '{parsed.scheme}'"
+            )
+
+        host = parsed.hostname or ""
+        if not host:
+            return ToolResult.from_error(self.name, "Invalid URL: no host")
+
+        # SSRF protection: block requests to private / internal addresses.
+        is_private = await asyncio.get_event_loop().run_in_executor(
+            None, _resolves_to_private, host
+        )
+        if is_private:
+            return ToolResult.from_error(
+                self.name,
+                f"Blocked: '{host}' resolves to a private or reserved address",
+            )
 
         cfg = get_config()
         timeout = params.get("timeout", cfg.tools.web.timeout_seconds)

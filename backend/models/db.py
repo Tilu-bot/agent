@@ -41,6 +41,7 @@ class EventKind(str, Enum):
     task_completed = "task_completed"
     error = "error"
     critic = "critic"
+    thinking = "thinking"
 
 
 class Run(Base):

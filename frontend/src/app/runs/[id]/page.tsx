@@ -13,6 +13,7 @@ const KIND_ICON: Record<string, string> = {
   verification: "✓",
   reflexion: "↻",
   synthesis: "✦",
+  thinking: "🧠",
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -22,6 +23,7 @@ const KIND_LABEL: Record<string, string> = {
   verification: "verify",
   reflexion: "reflexion",
   synthesis: "synthesis",
+  thinking: "thinking",
 };
 
 const ROLE_COLOR: Record<string, string> = {
@@ -151,12 +153,14 @@ function EventRow({ event }: { event: AgentEvent }) {
   const isToolResult = event.kind === "tool_result";
   const isSynthesis = event.kind === "synthesis";
   const isPlan = event.kind === "plan_created";
+  const isThinking = event.kind === "thinking";
   const kindLabel = KIND_LABEL[event.kind];
 
   let contentClass = styles.timelineContent;
   if (isSynthesis) contentClass += " " + styles.synthContent;
   else if (isToolCall) contentClass += " " + styles.toolCallContent;
   else if (isToolResult) contentClass += " " + styles.toolResultContent;
+  else if (isThinking) contentClass += " " + styles.thinkingContent;
 
   return (
     <div className={styles.timelineEntry}>
@@ -177,6 +181,9 @@ function EventRow({ event }: { event: AgentEvent }) {
             <span className={styles.synthBadge}>{kindLabel}</span>
           )}
           {isPlan && <span className={styles.planBadge}>{kindLabel}</span>}
+          {isThinking && (
+            <span className={styles.thinkingBadge}>{kindLabel}</span>
+          )}
           <span className={styles.timelineTime}>
             {new Date(event.created_at).toLocaleTimeString()}
           </span>

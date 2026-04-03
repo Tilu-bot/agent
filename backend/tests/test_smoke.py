@@ -2501,3 +2501,107 @@ async def test_get_run_includes_token_usage(tmp_path):
         get_resp = await client.get(f"/api/runs/{run_id}")
         assert get_resp.status_code == 200
         assert "token_usage" in get_resp.json()
+
+
+# ── Security: SSRF protection ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_web_fetch_blocks_localhost():
+    """web.fetch must not allow requests to loopback addresses."""
+    from backend.tools.web import WebFetchTool
+
+    tool = WebFetchTool()
+    result = await tool.execute({"url": "http://127.0.0.1/secret"})
+    assert not result.success
+    assert "private" in result.error.lower() or "reserved" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_blocks_private_ip():
+    """web.fetch must not allow requests to private RFC-1918 addresses."""
+    from backend.tools.web import WebFetchTool
+
+    tool = WebFetchTool()
+    result = await tool.execute({"url": "http://192.168.1.1/"})
+    assert not result.success
+    assert "private" in result.error.lower() or "reserved" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_blocks_non_http_scheme():
+    """web.fetch must reject non-http(s) schemes (e.g. file://)."""
+    from backend.tools.web import WebFetchTool
+
+    tool = WebFetchTool()
+    result = await tool.execute({"url": "file:///etc/passwd"})
+    assert not result.success
+    assert "scheme" in result.error.lower()
+
+
+# ── Security: python_run blocklist ────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_python_run_blocks_importlib():
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "import importlib; importlib.import_module('os')"})
+    assert not result.success
+    assert "dangerous" in result.error.lower() or "blocked" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_python_run_blocks_ctypes():
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "import ctypes"})
+    assert not result.success
+
+
+@pytest.mark.asyncio
+async def test_python_run_blocks_socket():
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "import socket; socket.connect(('8.8.8.8', 80))"})
+    assert not result.success
+
+
+@pytest.mark.asyncio
+async def test_python_run_blocks_os_popen():
+    from backend.tools.python_run import PythonRunTool
+
+    tool = PythonRunTool()
+    result = await tool.execute({"code": "import os; os.popen('id')"})
+    assert not result.success
+
+
+# ── Security: goal max_length ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_goal_max_length_rejected(tmp_path):
+    """POST /api/runs with a goal exceeding 10,000 characters must return 422."""
+    import os
+    os.chdir(tmp_path)
+
+    from httpx import AsyncClient, ASGITransport
+    from backend.main import create_app
+    from backend.models.database import init_db
+
+    await init_db()
+    app = create_app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post("/api/runs", json={"goal": "x" * 10_001})
+        assert r.status_code == 422, f"Expected 422, got {r.status_code}"
+
+
+# ── Reasoning: EventKind.thinking ────────────────────────────────────────────
+
+def test_event_kind_has_thinking():
+    """EventKind must include a 'thinking' member."""
+    from backend.models.db import EventKind
+
+    assert EventKind.thinking == "thinking"
+    assert "thinking" in {k.value for k in EventKind}
