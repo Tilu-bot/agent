@@ -148,7 +148,9 @@ def _infer_capabilities(model_name: str) -> set[str]:
         if pattern.search(model_name):
             caps |= tags
     if "embedding" not in caps:
-        # All non-embedding models can answer questions (fast) and use web tools (search).
+        # Intentional fallback for all non-embedding models, including unknown ones:
+        # any model can attempt a general question ("fast") and every run has access
+        # to web-search via tools ("search"), not via model weight.
         caps.add("fast")
     caps.add("search")
     return caps

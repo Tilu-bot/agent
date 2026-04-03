@@ -342,6 +342,7 @@ export default function ChatPage() {
               const ev: ThinkingEvent = {
                 id: payload.id ?? nextThinkId(),
                 kind: payload.kind,
+                // agent_role from the API event maps to the display label in ThinkingEvent.agent
                 agent: payload.agent_role ?? payload.kind,
                 content: payload.content ?? "",
               };

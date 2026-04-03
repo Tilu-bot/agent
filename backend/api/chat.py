@@ -163,7 +163,10 @@ def _classify_reason(message: str, mode: str) -> str:
     if mode == "agentic":
         m = _AGENTIC_RE.search(msg)
         if m:
-            return f"Detected agentic keyword: \"{m.group(0)}\". Using agent pipeline."
+            # m.group(0) is always a substring captured by our own pre-defined
+            # keyword regex, never arbitrary user input, so interpolation is safe.
+            keyword = m.group(0)
+            return f"Detected agentic keyword: \"{keyword}\". Using agent pipeline."
         if len(msg.split()) > 40:
             return "Long multi-sentence request. Using agent pipeline for structured planning."
         return "Request pattern suggests multi-step execution. Using agent pipeline."

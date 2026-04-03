@@ -133,11 +133,12 @@ class Orchestrator:
             # decisions about which agent roles are appropriate.
             registry = await get_registry()
             model_capabilities: str | None = None
-            if registry.ready and registry.available_models():
+            available_models = registry.available_models()
+            if registry.ready and available_models:
                 model_capabilities = registry.capability_summary()
                 await self._log_event(
                     run.id, EventKind.thinking, "model_registry",
-                    f"Discovered {len(registry.available_models())} model(s):\n{model_capabilities}",
+                    f"Discovered {len(available_models)} model(s):\n{model_capabilities}",
                 )
 
             # ── 1. Recall past learnings ───────────────────────────────────────
