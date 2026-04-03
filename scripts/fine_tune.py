@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Fine-tune a small quantized model on run data to create the *agen-model*.
 
-This script performs QLoRA (4-bit quantized LoRA) fine-tuning on a 3 B-param
-base model using run data exported from this system, producing the agen-model
-— a locally fine-tuned model specialised to the agent's planning and reasoning
+This script performs QLoRA (4-bit quantized LoRA) fine-tuning on
+**microsoft/Phi-3-mini-4k-instruct** (~3.8 B params) — a lightweight,
+instruction-tuned model that fits comfortably in ~6 GB VRAM at 4-bit and
+produces strong reasoning results.  The output is the **agen-model**, a
+locally fine-tuned model specialised to the agent's planning and reasoning
 tasks.
 
 Usage
 -----
     python scripts/fine_tune.py \\
         --data training_data.jsonl \\
-        --model Qwen/Qwen2.5-3B-Instruct \\
+        --model microsoft/Phi-3-mini-4k-instruct \\
         --output ./agen-model \\
         --epochs 3
 
@@ -18,11 +20,12 @@ The input JSONL file is produced by the API endpoint::
 
     GET /api/runs/export/training-data?format=alpaca&min_confidence=70
 
-Recommended base models for agen-model (3 B class, QLoRA-friendly)
--------------------------------------------------------------------
+Recommended base models for agen-model (lightweight, QLoRA-friendly)
+---------------------------------------------------------------------
+* microsoft/Phi-3-mini-4k-instruct   (~3.8 B params, default — lightweight & strong reasoning)
+* microsoft/Phi-3-mini-128k-instruct (~3.8 B params, 128 K context window variant)
 * Qwen/Qwen2.5-3B-Instruct          (~3 B params, strong instruction following)
 * Qwen/Qwen2.5-1.5B-Instruct        (~1.5 B params, lighter alternative)
-* microsoft/Phi-3-mini-4k-instruct  (~3.8 B params, excellent reasoning)
 * microsoft/bitnet_b1_58-3B         (native 1.58-bit / ternary weights)
 
 Requirements
@@ -54,8 +57,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="Qwen/Qwen2.5-3B-Instruct",
-        help="HuggingFace model ID or local path (default: Qwen2.5-3B-Instruct → agen-model).",
+        default="microsoft/Phi-3-mini-4k-instruct",
+        help=(
+            "HuggingFace model ID or local path "
+            "(default: microsoft/Phi-3-mini-4k-instruct → agen-model)."
+        ),
     )
     parser.add_argument(
         "--output",

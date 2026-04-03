@@ -42,11 +42,11 @@ _current_job_id: str | None = None
 
 class StartTrainingRequest(BaseModel):
     model: str = Field(
-        "Qwen/Qwen2.5-3B-Instruct",
+        "microsoft/Phi-3-mini-4k-instruct",
         description=(
             "HuggingFace model ID to fine-tune. "
-            "Defaults to Qwen2.5-3B-Instruct (~3 B params) which becomes the "
-            "'agen-model' after fine-tuning."
+            "Defaults to Phi-3-mini-4k-instruct (~3.8 B params, lightweight and "
+            "instruction-tuned) which becomes the 'agen-model' after fine-tuning."
         ),
     )
     output_dir: str = Field(
