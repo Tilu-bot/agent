@@ -326,8 +326,8 @@ class Orchestrator:
         try:
             await self._log_event(
                 run.id, EventKind.thinking, task.agent_role or "agent",
-                f"Working on: {task.title}. "
-                f"{('Description: ' + task.description) if task.description else ''}".strip(),
+                f"Working on: {task.title}."
+                + (f" Description: {task.description}" if task.description else ""),
                 task_id=task.id, session=session,
             )
             outcome = await self._tool_op.execute_task(task, context, run_id=run.id)

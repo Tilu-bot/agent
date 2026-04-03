@@ -304,7 +304,7 @@ export default function ChatPage() {
     if (mode === "agentic") {
       // Create an agent run and track it inline
       try {
-        const run: Run = await api.createRun(text, model.trim() ? undefined : undefined);
+        const run: Run = await api.createRun(text, model.trim() ? { reasoning: model.trim(), fast: model.trim() } : undefined);
         setMessages((prev) => [
           ...prev,
           {

@@ -348,6 +348,7 @@ export default function HomePage() {
               onChange={(e) => setGoal(e.target.value)}
               rows={4}
               className={styles.goalInput}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   handleCreate(e);
