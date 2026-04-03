@@ -2689,3 +2689,163 @@ async def test_classify_endpoint_route_registered(tmp_path):
     app = create_app()
     paths = [r.path for r in app.routes]
     assert "/api/chat/classify" in paths
+
+
+# ── Model capability registry tests ──────────────────────────────────────────
+
+def test_registry_infer_code_model():
+    from backend.llm.model_registry import _infer_capabilities
+    caps = _infer_capabilities("qwen2.5-coder:3b")
+    assert "code" in caps
+    assert "embedding" not in caps
+
+
+def test_registry_infer_math_model():
+    from backend.llm.model_registry import _infer_capabilities
+    caps = _infer_capabilities("qwen2.5-math:7b")
+    assert "math" in caps
+    assert "reasoning" in caps
+
+
+def test_registry_infer_vision_model():
+    from backend.llm.model_registry import _infer_capabilities
+    caps = _infer_capabilities("llava:7b")
+    assert "vision" in caps
+
+
+def test_registry_infer_embedding_model():
+    from backend.llm.model_registry import _infer_capabilities
+    caps = _infer_capabilities("nomic-embed-text:latest")
+    assert "embedding" in caps
+    # embedding models should NOT get "fast" or "search"
+    assert "fast" not in caps
+
+
+def test_registry_infer_general_model():
+    from backend.llm.model_registry import _infer_capabilities
+    caps = _infer_capabilities("llama3.2:3b")
+    # general instruct model gets reasoning and fast
+    assert "fast" in caps
+    assert "reasoning" in caps
+
+
+def test_registry_best_model_for_code():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    reg = ModelRegistry()
+    # Manually populate without Ollama
+    reg._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}),
+        ModelProfile("qwen2.5-coder:3b", {"code", "fast", "search"}),
+    ]
+    reg._available = {"llama3.2:3b", "qwen2.5-coder:3b"}
+    reg.ready = True
+
+    assert reg.best_model_for("code") == "qwen2.5-coder:3b"
+    assert reg.best_model_for("fast") in {"llama3.2:3b", "qwen2.5-coder:3b"}
+
+
+def test_registry_slot_recommendation_uses_fallback():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}),
+    ]
+    reg._available = {"llama3.2:3b"}
+    reg.ready = True
+
+    # Configured code model is not installed → fallback to best available
+    result = reg.slot_recommendation("code", "qwen2.5-coder:3b")
+    assert result == "llama3.2:3b"
+
+
+def test_registry_slot_recommendation_keeps_installed_model():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("qwen2.5-coder:3b", {"code", "fast", "search"}),
+    ]
+    reg._available = {"qwen2.5-coder:3b"}
+    reg.ready = True
+
+    # Configured model IS installed → return unchanged
+    result = reg.slot_recommendation("code", "qwen2.5-coder:3b")
+    assert result == "qwen2.5-coder:3b"
+
+
+def test_router_uses_registry_fallback():
+    """ModelRouter.select_model() should use registry when config model is missing."""
+    import backend.llm.model_registry as _mr_module
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    from backend.llm.router import ModelRouter, TaskType
+
+    # Install a registry with only llama3.2:3b
+    fake_registry = ModelRegistry()
+    fake_registry._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}),
+    ]
+    fake_registry._available = {"llama3.2:3b"}
+    fake_registry.ready = True
+    _mr_module._registry = fake_registry
+
+    try:
+        router = ModelRouter()
+        # code slot is configured as qwen2.5-coder:3b (default) but not in registry
+        model = router.select_model(TaskType.code)
+        # Should fall back to the only available model
+        assert model == "llama3.2:3b"
+    finally:
+        # Reset registry so other tests are not affected
+        _mr_module._registry = None
+
+
+def test_router_keeps_installed_config_model():
+    """ModelRouter.select_model() should keep the configured model when it's installed."""
+    import backend.llm.model_registry as _mr_module
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    from backend.llm.router import ModelRouter, TaskType
+
+    fake_registry = ModelRegistry()
+    fake_registry._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}),
+        ModelProfile("qwen2.5-coder:3b", {"code", "fast", "search"}),
+    ]
+    fake_registry._available = {"llama3.2:3b", "qwen2.5-coder:3b"}
+    fake_registry.ready = True
+    _mr_module._registry = fake_registry
+
+    try:
+        router = ModelRouter()
+        model = router.select_model(TaskType.code)
+        assert model == "qwen2.5-coder:3b"
+    finally:
+        _mr_module._registry = None
+
+
+def test_registry_capability_summary():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}),
+        ModelProfile("qwen2.5-coder:3b", {"code", "fast", "search"}),
+    ]
+    reg.ready = True
+    summary = reg.capability_summary()
+    assert "llama3.2:3b" in summary
+    assert "qwen2.5-coder:3b" in summary
+    assert "code" in summary
+
+
+def test_registry_not_initialized_does_not_break_router():
+    """When registry is None (not yet built), router returns config values unchanged."""
+    import backend.llm.model_registry as _mr_module
+    from backend.llm.router import ModelRouter, TaskType
+
+    original = _mr_module._registry
+    _mr_module._registry = None
+    try:
+        router = ModelRouter()
+        # Should still return a valid model name from config
+        model = router.select_model(TaskType.fast)
+        assert model  # non-empty
+    finally:
+        _mr_module._registry = original

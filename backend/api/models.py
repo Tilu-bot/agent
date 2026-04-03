@@ -56,18 +56,41 @@ def _current_slots() -> dict[str, str]:
 
 @router.get("")
 async def list_models() -> dict[str, Any]:
-    """List available Ollama models and current slot assignments."""
+    """List available Ollama models, current slot assignments, and capability profiles."""
+    from backend.llm.model_registry import get_registry
+
     ollama = OllamaClient()
     try:
         available = await ollama.list_models()
     except Exception:
         available = []
 
+    # Refresh (or reuse) the model capability registry
+    registry = await get_registry()
+    capabilities: dict[str, list[str]] = {
+        p.name: sorted(p.capabilities)
+        for p in registry.profiles()
+    }
+
+    # Annotate each slot with the model that will actually be used
+    # (registry may have substituted the configured model for a better one)
+    from backend.llm.router import ModelRouter, TaskType
+    _temp_router = ModelRouter()
+    effective_slots: dict[str, str] = {}
+    for slot in _SLOTS:
+        try:
+            tt = TaskType(slot)
+            effective_slots[slot] = _temp_router.select_model(tt)
+        except ValueError:
+            effective_slots[slot] = _current_slots().get(slot, "")
+
     return {
         "available": available,
         "slots": _current_slots(),
+        "effective_slots": effective_slots,
         "slot_names": list(_SLOTS),
         "runtime_overrides": get_runtime_model_overrides(),
+        "capabilities": capabilities,
     }
 
 
@@ -103,6 +126,75 @@ async def reset_slots() -> dict[str, Any]:
     """Reset all runtime model slot overrides to the YAML config defaults."""
     clear_runtime_model_overrides()
     return {"reset": True, "slots": _current_slots()}
+
+
+@router.post("/registry/refresh")
+async def refresh_model_registry() -> dict[str, Any]:
+    """Re-probe Ollama for available models and rebuild the capability registry.
+
+    Call this after pulling a new model so the router and planner can
+    immediately start using it for appropriate tasks.
+    """
+    from backend.llm.model_registry import refresh_registry
+
+    registry = await refresh_registry()
+    return {
+        "available": registry.available_models(),
+        "capabilities": {
+            p.name: sorted(p.capabilities)
+            for p in registry.profiles()
+        },
+    }
+
+
+@router.get("/capabilities")
+async def model_capabilities() -> dict[str, Any]:
+    """Return the full model capability registry.
+
+    Shows which models are installed, what each is expert at, and which
+    model will actually be used for each task slot (may differ from the
+    YAML-configured value when that model is not installed).
+    """
+    from backend.llm.model_registry import get_registry
+    from backend.llm.router import ModelRouter, TaskType
+
+    registry = await get_registry()
+    _temp_router = ModelRouter()
+
+    slot_resolution: list[dict[str, str]] = []
+    for slot in _SLOTS:
+        configured = _current_slots().get(slot, "")
+        try:
+            tt = TaskType(slot)
+            effective = _temp_router.select_model(tt)
+        except ValueError:
+            effective = configured
+        reason = ""
+        if registry.ready and configured != effective:
+            reason = (
+                f"'{configured}' is not installed; using best available "
+                f"'{effective}' for '{slot}' tasks"
+            )
+        elif registry.ready and configured:
+            reason = "configured model is installed"
+        slot_resolution.append({
+            "slot": slot,
+            "configured": configured,
+            "effective": effective,
+            "reason": reason,
+        })
+
+    return {
+        "models": [
+            {
+                "name": p.name,
+                "capabilities": sorted(p.capabilities),
+            }
+            for p in sorted(registry.profiles(), key=lambda x: x.name)
+        ],
+        "slot_resolution": slot_resolution,
+        "summary": registry.capability_summary(),
+    }
 
 
 @router.get("/pull")

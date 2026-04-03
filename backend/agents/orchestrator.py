@@ -20,6 +20,7 @@ from backend.agents.tool_operator import ToolOperator
 from backend.agents.verifier import Verifier
 from backend.agents.voter import Voter
 from backend.config import get_config
+from backend.llm.model_registry import get_registry, refresh_registry
 from backend.llm.ollama_client import OllamaClient
 from backend.llm.router import ModelRouter
 from backend.models.database import get_session_factory
@@ -125,6 +126,20 @@ class Orchestrator:
             return
 
         try:
+            # ── 0. Build / refresh model capability registry ───────────────────
+            # This discovers which models are installed and what each is good at.
+            # The registry is then used by ModelRouter to pick the best available
+            # model for every task type, and by the Planner to make informed
+            # decisions about which agent roles are appropriate.
+            registry = await get_registry()
+            model_capabilities: str | None = None
+            if registry.ready and registry.available_models():
+                model_capabilities = registry.capability_summary()
+                await self._log_event(
+                    run.id, EventKind.thinking, "model_registry",
+                    f"Discovered {len(registry.available_models())} model(s):\n{model_capabilities}",
+                )
+
             # ── 1. Recall past learnings ───────────────────────────────────────
             memories: list[str] = []
             if self._cfg.memory.enabled:
@@ -132,7 +147,7 @@ class Orchestrator:
                     run.goal, limit=self._cfg.memory.recall_limit
                 )
 
-            # ── 2. Plan (tool-aware + memory-aware, optionally via debate) ────
+            # ── 2. Plan (tool-aware + memory-aware + capability-aware) ────────
             tool_names = self._tool_bus.list_tools()
             await self._log_event(
                 run.id, EventKind.thinking, "planner",
@@ -160,6 +175,7 @@ class Orchestrator:
                     run.goal, run.id,
                     available_tools=tool_names,
                     memories=memories if memories else None,
+                    model_capabilities=model_capabilities,
                 )
                 # Retry once if the planner returned only the fallback single task
                 # whose description signals a parse failure (empty plan).
@@ -176,6 +192,7 @@ class Orchestrator:
                         run.goal, run.id,
                         available_tools=tool_names,
                         memories=memories if memories else None,
+                        model_capabilities=model_capabilities,
                     )
             for task in tasks:
                 self._session.add(task)

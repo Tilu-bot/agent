@@ -53,8 +53,9 @@ class Planner:
         run_id: str,
         available_tools: list[str] | None = None,
         memories: list[str] | None = None,
+        model_capabilities: str | None = None,
     ) -> list[Task]:
-        system = self._build_system_prompt(available_tools, memories)
+        system = self._build_system_prompt(available_tools, memories, model_capabilities)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": f"Goal: {goal}"},
@@ -69,8 +70,16 @@ class Planner:
         self,
         available_tools: list[str] | None,
         memories: list[str] | None,
+        model_capabilities: str | None = None,
     ) -> str:
         parts = [self._BASE_SYSTEM]
+
+        if model_capabilities:
+            parts.append(
+                f"\nAvailable AI models and their strengths (use this to assign the right "
+                f"agent_role — prefer roles that align with an installed model's strength):\n"
+                f"{model_capabilities}"
+            )
 
         if available_tools:
             tool_list = ", ".join(available_tools)

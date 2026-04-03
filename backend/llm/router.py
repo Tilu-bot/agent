@@ -53,6 +53,17 @@ class ModelRouter:
         self._completion_tokens: int = 0
 
     def select_model(self, task_type: TaskType | str) -> str:
+        """Return the model name to use for *task_type*.
+
+        Selection priority (highest first):
+
+        1. Per-run override (constructor argument).
+        2. Global runtime override (``set_runtime_model_override``).
+        3. YAML config value — validated against the live Ollama model list
+           via the :class:`~backend.llm.model_registry.ModelRegistry`.  If
+           the configured model is not installed, the registry automatically
+           picks the best available model for that slot's capability.
+        """
         try:
             task_type = TaskType(task_type) if isinstance(task_type, str) else task_type
         except ValueError:
@@ -60,16 +71,16 @@ class ModelRouter:
 
         slot = task_type.value
 
-        # 1. Per-run override
+        # 1. Per-run override — trust caller, no registry check needed
         if slot in self._run_models:
             return self._run_models[slot]
 
-        # 2. Global runtime override
+        # 2. Global runtime override — trust operator, no registry check
         runtime_overrides = get_runtime_model_overrides()
         if slot in runtime_overrides:
             return runtime_overrides[slot]
 
-        # 3. YAML config
+        # 3. YAML config → validate against the live registry (if built)
         models = self._cfg.models
         mapping = {
             TaskType.fast: models.fast,
@@ -79,7 +90,23 @@ class ModelRouter:
             TaskType.math: models.math,
             TaskType.vision: models.vision,
         }
-        return mapping.get(task_type, models.fast)
+        config_model = mapping.get(task_type, models.fast)
+        return self._resolve_via_registry(slot, config_model)
+
+    @staticmethod
+    def _resolve_via_registry(slot: str, configured_model: str) -> str:
+        """Check *configured_model* against the registry and fall back if needed.
+
+        When the registry has not been built yet (``None``) the configured
+        value is returned unchanged so the system works in test environments
+        without a live Ollama instance.
+        """
+        from backend.llm.model_registry import get_registry_sync  # avoid circular import
+
+        registry = get_registry_sync()
+        if registry is None:
+            return configured_model
+        return registry.slot_recommendation(slot, configured_model)
 
     def token_stats(self) -> dict[str, int]:
         """Return accumulated token counts since this router was created."""

@@ -66,11 +66,25 @@ export interface ModelSlots {
   [key: string]: string;
 }
 
+export interface ModelCapabilityEntry {
+  name: string;
+  capabilities: string[];
+}
+
+export interface SlotResolution {
+  slot: string;
+  configured: string;
+  effective: string;
+  reason: string;
+}
+
 export interface ModelsResponse {
   available: string[];
   slots: ModelSlots;
+  effective_slots: ModelSlots;
   slot_names: string[];
   runtime_overrides: Record<string, string>;
+  capabilities: Record<string, string[]>;
 }
 
 export interface TrainingStatus {
