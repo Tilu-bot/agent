@@ -152,6 +152,9 @@ class ChatRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_REASON_PREFIX_LEN = 30  # characters of the message shown in the classify reason string
+
+
 def _classify_reason(message: str, mode: str) -> str:
     """Return a short human-readable explanation for why *mode* was chosen."""
     msg = message.strip()
@@ -169,7 +172,8 @@ def _classify_reason(message: str, mode: str) -> str:
         return "Short conversational message. Answering directly."
     m = _DIRECT_RE.match(msg)
     if m:
-        return f"Conversational prefix detected (\"{msg[:30]}…\"). Answering directly."
+        prefix = msg[:_REASON_PREFIX_LEN]
+        return f"Conversational prefix detected (\"{prefix}…\"). Answering directly."
     return "No agentic signals found. Answering directly."
 
 def _build_router(model: str | None) -> ModelRouter:

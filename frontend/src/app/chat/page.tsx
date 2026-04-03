@@ -134,6 +134,13 @@ function BubbleContent({ text }: { text: string }) {
 
 // ── Thinking panel ───────────────────────────────────────────────────────────
 
+const MAX_THINKING_STEP_LENGTH = 200;
+
+let _thinkEvtId = 0;
+function nextThinkId() {
+  return String(++_thinkEvtId);
+}
+
 const KIND_ICONS: Record<string, string> = {
   thinking: "💭",
   agent_message: "🤖",
@@ -167,7 +174,7 @@ function ThinkingPanel({
 
   useEffect(() => {
     if (isActive) setExpanded(true);
-  }, [isActive, events.length]);
+  }, [isActive]);
 
   if (events.length === 0 && !isActive) return null;
 
@@ -199,8 +206,8 @@ function ThinkingPanel({
                 <span className={styles.thinkingStepAgent}>{ev.agent || ev.kind}</span>
                 {ev.content && (
                   <span className={styles.thinkingStepText}>
-                    {ev.content.length > 200
-                      ? ev.content.slice(0, 200) + "…"
+                    {ev.content.length > MAX_THINKING_STEP_LENGTH
+                      ? ev.content.slice(0, MAX_THINKING_STEP_LENGTH) + "…"
                       : ev.content}
                   </span>
                 )}
@@ -333,7 +340,7 @@ export default function ChatPage() {
             // Add every non-synthesis event to the thinking panel.
             if (payload.kind !== "synthesis") {
               const ev: ThinkingEvent = {
-                id: payload.id ?? String(Date.now() + Math.random()),
+                id: payload.id ?? nextThinkId(),
                 kind: payload.kind,
                 agent: payload.agent_role ?? payload.kind,
                 content: payload.content ?? "",
