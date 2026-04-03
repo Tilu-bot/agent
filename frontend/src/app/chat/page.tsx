@@ -132,12 +132,102 @@ function BubbleContent({ text }: { text: string }) {
   );
 }
 
+// ── Thinking panel ───────────────────────────────────────────────────────────
+
+const KIND_ICONS: Record<string, string> = {
+  thinking: "💭",
+  agent_message: "🤖",
+  tool_call: "🔧",
+  tool_result: "✓",
+  plan_created: "📋",
+  verification: "✅",
+  reflexion: "🔄",
+  synthesis: "✨",
+  critic: "🎯",
+  error: "❌",
+  task_started: "▶",
+  task_completed: "✅",
+};
+
+interface ThinkingEvent {
+  id: string;
+  kind: string;
+  agent: string;
+  content: string;
+}
+
+function ThinkingPanel({
+  events,
+  isActive,
+}: {
+  events: ThinkingEvent[];
+  isActive: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    if (isActive) setExpanded(true);
+  }, [isActive, events.length]);
+
+  if (events.length === 0 && !isActive) return null;
+
+  return (
+    <div className={styles.thinkingPanel}>
+      <button
+        className={styles.thinkingToggle}
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+      >
+        <span className={styles.thinkingToggleIcon}>
+          {isActive ? <span className={styles.thinkingSpinner} /> : "💭"}
+        </span>
+        <span className={styles.thinkingToggleLabel}>
+          {isActive
+            ? `Thinking… (${events.length} step${events.length !== 1 ? "s" : ""})`
+            : `Reasoning (${events.length} step${events.length !== 1 ? "s" : ""})`}
+        </span>
+        <span className={styles.thinkingChevron}>{expanded ? "▲" : "▼"}</span>
+      </button>
+      {expanded && (
+        <div className={styles.thinkingSteps}>
+          {events.map((ev) => (
+            <div key={ev.id} className={styles.thinkingStep}>
+              <span className={styles.thinkingStepIcon}>
+                {KIND_ICONS[ev.kind] ?? "•"}
+              </span>
+              <div className={styles.thinkingStepBody}>
+                <span className={styles.thinkingStepAgent}>{ev.agent || ev.kind}</span>
+                {ev.content && (
+                  <span className={styles.thinkingStepText}>
+                    {ev.content.length > 200
+                      ? ev.content.slice(0, 200) + "…"
+                      : ev.content}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+          {isActive && (
+            <div className={`${styles.thinkingStep} ${styles.thinkingStepLive}`}>
+              <span className={styles.thinkingStepIcon}>
+                <span className={styles.liveDot} />
+              </span>
+              <span className={styles.thinkingStepText}>Processing…</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Agent run inline bubble ───────────────────────────────────────────────────
 
 interface AgentRunState {
   runId: string;
   status: string;
   synthesis: string;
+  events: ThinkingEvent[];
 }
 
 function AgentRunBubble({ state }: { state: AgentRunState }) {
@@ -152,9 +242,12 @@ function AgentRunBubble({ state }: { state: AgentRunState }) {
           View details →
         </Link>
       </div>
+      <ThinkingPanel events={state.events} isActive={isActive} />
       {state.synthesis ? (
-        <BubbleContent text={state.synthesis} />
-      ) : isActive ? (
+        <div className={styles.agentSynthesis}>
+          <BubbleContent text={state.synthesis} />
+        </div>
+      ) : isActive && state.events.length === 0 ? (
         <div className={styles.agentRunThinking}>
           <div className={styles.dot} />
           <div className={styles.dot} />
@@ -174,6 +267,7 @@ interface Message {
   content: string;
   streaming?: boolean;
   agentRun?: AgentRunState;
+  modelInfo?: { model: string; taskType: string };
 }
 
 let _msgId = 0;
@@ -190,6 +284,7 @@ export default function ChatPage() {
   const [model, setModel] = useState("");
   const [sending, setSending] = useState(false);
   const [routeMode, setRouteMode] = useState<"direct" | "agentic" | null>(null);
+  const [routeReason, setRouteReason] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -230,9 +325,34 @@ export default function ChatPage() {
             );
           } else if (msg.type === "event") {
             const payload = msg.payload as {
+              id?: string;
               kind: string;
+              agent_role?: string | null;
               content: string | null;
             };
+            // Add every non-synthesis event to the thinking panel.
+            if (payload.kind !== "synthesis") {
+              const ev: ThinkingEvent = {
+                id: payload.id ?? String(Date.now() + Math.random()),
+                kind: payload.kind,
+                agent: payload.agent_role ?? payload.kind,
+                content: payload.content ?? "",
+              };
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId && m.agentRun
+                    ? {
+                        ...m,
+                        agentRun: {
+                          ...m.agentRun,
+                          events: [...m.agentRun.events, ev],
+                        },
+                      }
+                    : m
+                )
+              );
+            }
+            // Capture synthesis as the final answer.
             if (payload.kind === "synthesis" && payload.content) {
               setMessages((prev) =>
                 prev.map((m) =>
@@ -273,19 +393,27 @@ export default function ChatPage() {
     setSending(true);
     setError(null);
     setRouteMode(null);
+    setRouteReason("");
     if (inputRef.current) inputRef.current.style.height = "auto";
 
     // Build the full message list for the API
     const userMsg: Message = { id: nextId(), role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
 
-    // Build API messages (include system prompt if set)
+    // Build API messages — include system prompt + full conversation history.
+    // Agent run messages contribute their synthesis so follow-up turns have context.
     const apiMessages: ChatMessage[] = [];
     if (system.trim()) {
       apiMessages.push({ role: "system", content: system.trim() });
     }
     for (const m of messages) {
-      if (!m.agentRun) apiMessages.push({ role: m.role, content: m.content });
+      if (m.agentRun) {
+        if (m.agentRun.synthesis) {
+          apiMessages.push({ role: m.role, content: m.agentRun.synthesis });
+        }
+      } else if (m.content) {
+        apiMessages.push({ role: m.role, content: m.content });
+      }
     }
     apiMessages.push({ role: "user", content: text });
 
@@ -294,6 +422,7 @@ export default function ChatPage() {
     try {
       const cls = await api.classifyChat(apiMessages);
       mode = cls.mode;
+      setRouteReason(cls.reason ?? "");
     } catch {
       // Classify failed → fall back to direct
     }
@@ -315,6 +444,7 @@ export default function ChatPage() {
               runId: run.id,
               status: run.status,
               synthesis: "",
+              events: [],
             },
           },
         ]);
@@ -364,7 +494,16 @@ export default function ChatPage() {
       },
       model.trim() || undefined,
       "fast",
-      controller.signal
+      controller.signal,
+      (modelName, taskType) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, modelInfo: { model: modelName, taskType } }
+              : m
+          )
+        );
+      }
     );
   }, [input, sending, system, messages, model, trackRun]);
 
@@ -394,6 +533,7 @@ export default function ChatPage() {
     setError(null);
     setInput("");
     setRouteMode(null);
+    setRouteReason("");
     inputRef.current?.focus();
   }
 
@@ -474,17 +614,25 @@ export default function ChatPage() {
               }`}
             >
               {msg.role === "assistant" ? (
-                msg.agentRun ? (
-                  <AgentRunBubble state={msg.agentRun} />
-                ) : msg.streaming && msg.content === "" ? (
-                  <div className={styles.typingDots}>
-                    <div className={styles.dot} />
-                    <div className={styles.dot} />
-                    <div className={styles.dot} />
-                  </div>
-                ) : (
-                  <BubbleContent text={msg.content} />
-                )
+                <>
+                  {msg.modelInfo && !msg.agentRun && (
+                    <div className={styles.modelInfoTag}>
+                      ✦ {msg.modelInfo.model}
+                      <span className={styles.modelInfoSlot}>{msg.modelInfo.taskType}</span>
+                    </div>
+                  )}
+                  {msg.agentRun ? (
+                    <AgentRunBubble state={msg.agentRun} />
+                  ) : msg.streaming && msg.content === "" ? (
+                    <div className={styles.typingDots}>
+                      <div className={styles.dot} />
+                      <div className={styles.dot} />
+                      <div className={styles.dot} />
+                    </div>
+                  ) : (
+                    <BubbleContent text={msg.content} />
+                  )}
+                </>
               ) : (
                 <BubbleContent text={msg.content} />
               )}
@@ -540,16 +688,26 @@ export default function ChatPage() {
         </div>
         <div className={styles.inputHint}>
           {routeMode && (
-            <span className={`${styles.routeTag} ${styles[`route_${routeMode}`]}`}>
+            <span
+              className={`${styles.routeTag} ${styles[`route_${routeMode}`]}`}
+              title={routeReason}
+            >
               {routeMode === "agentic" ? "🤖 agent task" : "💬 direct answer"}
             </span>
           )}
-          {model && model.includes("/")
-            ? `Using HuggingFace model: ${model}`
-            : model
-            ? `Using Ollama model: ${model}`
-            : "Auto model from config"}{" "}
-          · Enter ↵ to send
+          {routeReason && (
+            <span className={styles.routeReason}>{routeReason}</span>
+          )}
+          {!routeReason && (
+            <>
+              {model && model.includes("/")
+                ? `Using HuggingFace: ${model}`
+                : model
+                ? `Using Ollama: ${model}`
+                : "Auto model from config"}{" "}
+              · Enter ↵ to send
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -160,7 +160,7 @@ export const api = {
    * No LLM call is made — this is a fast heuristic.
    */
   classifyChat: (messages: ChatMessage[]) =>
-    apiFetch<{ mode: "direct" | "agentic" }>("/api/chat/classify", {
+    apiFetch<{ mode: "direct" | "agentic"; reason: string }>("/api/chat/classify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages }),
@@ -181,6 +181,7 @@ export const api = {
     }),
   /**
    * Open a streaming POST request and call `onToken` for each yielded token.
+   * `onModelInfo` is called once at the start with the selected model name.
    * Resolves when the stream ends or `onError` is called on error.
    * Pass an `AbortSignal` to cancel the request mid-stream.
    */
@@ -191,7 +192,8 @@ export const api = {
     onError: (err: string) => void,
     model?: string,
     taskType = "fast",
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onModelInfo?: (model: string, taskType: string) => void
   ): Promise<void> => {
     let resp: Response;
     try {
@@ -225,9 +227,19 @@ export const api = {
           const data = line.slice(6).trim();
           if (data === "[DONE]") { onDone(); return; }
           try {
-            const obj = JSON.parse(data) as { token?: string; error?: string };
+            const obj = JSON.parse(data) as {
+              token?: string;
+              error?: string;
+              type?: string;
+              model?: string;
+              task_type?: string;
+            };
             if (obj.error) { onError(obj.error); return; }
-            if (obj.token) onToken(obj.token);
+            if (obj.type === "model_info" && obj.model && onModelInfo) {
+              onModelInfo(obj.model, obj.task_type ?? taskType);
+            } else if (obj.token) {
+              onToken(obj.token);
+            }
           } catch { /* ignore malformed lines */ }
         }
       }
