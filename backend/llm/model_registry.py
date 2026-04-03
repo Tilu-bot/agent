@@ -199,7 +199,6 @@ class ModelRegistry:
 
     async def refresh(self) -> None:
         """Probe all local backends and build capability profiles."""
-        import asyncio
         from backend.llm.ollama_client import OllamaClient        # avoid circular import
         from backend.llm.llamacpp_client import LlamaCppClient    # noqa: WPS433
 
@@ -325,10 +324,10 @@ class ModelRegistry:
         if fallback:
             return (
                 fallback,
-                f"configured model '{configured_model}' not found in Ollama; "
+                f"configured model '{configured_model}' not found in any local backend; "
                 f"using best available '{fallback}' for '{slot}' tasks",
             )
-        return configured_model, f"no models available; falling back to '{configured_model}'"
+        return configured_model, f"no local models available; falling back to '{configured_model}'"
 
 
 # ---------------------------------------------------------------------------

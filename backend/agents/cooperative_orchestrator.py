@@ -63,6 +63,10 @@ from backend.agents.planner import Planner
 from backend.agents.reflexion import ReflexionAgent
 from backend.agents.synthesizer import Synthesizer
 from backend.agents.verifier import Verifier
+
+# Truncation limits for text stored in the knowledge store / message bus.
+_KNOWLEDGE_VALUE_CHARS = 500   # max chars stored per fact value
+_BUS_SHARE_CHARS = 300         # max chars in a knowledge_share broadcast
 from backend.config import get_config
 from backend.llm.model_registry import get_registry
 from backend.llm.ollama_client import OllamaClient
@@ -140,13 +144,17 @@ class CooperativeOrchestrator:
         await self._log_event(run.id, EventKind.agent_message, "orchestrator",
                               f"Starting cooperative run: {run.goal}")
 
-        # Preflight: verify Ollama
-        if not await OllamaClient().is_available():
+        # Preflight: check that at least one backend is reachable.
+        # Ollama is the primary backend; llama.cpp servers are also valid.
+        # We build the registry first; if no models are found at all, then fail.
+        registry_check = await get_registry()
+        if not registry_check.available_models() and not await OllamaClient().is_available():
             run.status = RunStatus.failed
             await self._log_event(
                 run.id, EventKind.agent_message, "orchestrator",
-                "Ollama is not running. Start with: `ollama serve`, "
-                "then pull a model: `ollama pull llama3.2:3b`",
+                "No models are available. Start Ollama with: `ollama serve` and "
+                "pull a model: `ollama pull llama3.2:3b`, OR start a llama.cpp "
+                "server on port 8080.",
             )
             self._session.add(run)
             await self._session.commit()
