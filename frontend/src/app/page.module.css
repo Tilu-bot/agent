@@ -53,6 +53,23 @@
   border-color: var(--accent);
 }
 
+.chatNavBtn {
+  display: inline-block;
+  background: var(--accent-dim);
+  border: 1px solid rgba(108, 99, 255, 0.3);
+  color: var(--accent-light);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  text-decoration: none;
+  transition: opacity 0.15s;
+}
+
+.chatNavBtn:hover {
+  opacity: 0.85;
+  text-decoration: none;
+}
+
 /* ── Settings panel ──────────────────────────────────────────────────────────*/
 
 .settingsOverlay {

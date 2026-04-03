@@ -80,6 +80,11 @@ export interface TrainingStatus {
   error: string;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
   if (!res.ok) {
@@ -145,6 +150,70 @@ export const api = {
     apiFetch<Array<{ job_id: string; status: string; started_at: string; model: string }>>(
       "/api/training/jobs"
     ),
+  // ── Chat ────────────────────────────────────────────────────────────────────
+  /**
+   * Send messages and receive the full assistant reply as JSON.
+   * Use `chatStream` instead for a streaming/typing-indicator experience.
+   */
+  chatMessage: (
+    messages: ChatMessage[],
+    model?: string,
+    taskType = "fast"
+  ) =>
+    apiFetch<{ role: string; content: string }>("/api/chat/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, model: model ?? null, task_type: taskType }),
+    }),
+  /**
+   * Open a streaming POST request and call `onToken` for each yielded token.
+   * Resolves when the stream ends or `onError` is called on error.
+   */
+  chatStream: async (
+    messages: ChatMessage[],
+    onToken: (token: string) => void,
+    onDone: () => void,
+    onError: (err: string) => void,
+    model?: string,
+    taskType = "fast"
+  ): Promise<void> => {
+    let resp: Response;
+    try {
+      resp = await fetch(`${API_BASE}/api/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages, model: model ?? null, task_type: taskType }),
+      });
+    } catch (e) {
+      onError(String(e));
+      return;
+    }
+    if (!resp.ok) {
+      onError(`Chat stream failed: ${resp.status}`);
+      return;
+    }
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") { onDone(); return; }
+        try {
+          const obj = JSON.parse(data) as { token?: string; error?: string };
+          if (obj.error) { onError(obj.error); return; }
+          if (obj.token) onToken(obj.token);
+        } catch { /* ignore */ }
+      }
+    }
+    onDone();
+  },
   // ── Health ──────────────────────────────────────────────────────────────────
   health: () => apiFetch<{ status: string; ollama: boolean }>("/api/health"),
   streamUrl: (id: string) => `${API_BASE}/api/runs/${id}/stream`,

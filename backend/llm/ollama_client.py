@@ -71,6 +71,46 @@ class OllamaClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        options: dict[str, Any] | None = None,
+        task_type: str | None = None,
+    ):
+        """Async generator yielding content tokens from a streaming Ollama chat.
+
+        Each yielded value is a plain string token/chunk.
+        """
+        import json as _json
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+        }
+        if options:
+            payload["options"] = options
+        timeout = self._timeout_for(task_type)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST", f"{self._base_url}/api/chat", json=payload
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = _json.loads(line)
+                        token = data.get("message", {}).get("content") or ""
+                        if token:
+                            yield token
+                        if data.get("done"):
+                            break
+                    except _json.JSONDecodeError:
+                        pass
+
     async def list_models(self) -> list[str]:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{self._base_url}/api/tags")

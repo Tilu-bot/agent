@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
-"""Fine-tune a small quantization-friendly model on run data exported from this system.
+"""Fine-tune a small quantized model on run data to create the *agen-model*.
+
+This script performs QLoRA (4-bit quantized LoRA) fine-tuning on a 3 B-param
+base model using run data exported from this system, producing the agen-model
+— a locally fine-tuned model specialised to the agent's planning and reasoning
+tasks.
 
 Usage
 -----
     python scripts/fine_tune.py \\
         --data training_data.jsonl \\
-        --model Qwen/Qwen2.5-0.5B-Instruct \\
-        --output ./ft-model \\
+        --model Qwen/Qwen2.5-3B-Instruct \\
+        --output ./agen-model \\
         --epochs 3
 
 The input JSONL file is produced by the API endpoint::
 
     GET /api/runs/export/training-data?format=alpaca&min_confidence=70
 
-Recommended base models (small, quantization-friendly)
--------------------------------------------------------
-* Qwen/Qwen2.5-0.5B-Instruct   (~0.5 B params, ternary-weight friendly)
-* Qwen/Qwen2.5-1.5B-Instruct   (~1.5 B params)
-* microsoft/phi-3-mini-4k-instruct (~3.8 B params, fits in 4 GB RAM at Q4)
-* microsoft/bitnet_b1_58-3B     (native 1.58-bit / ternary weights)
+Recommended base models for agen-model (3 B class, QLoRA-friendly)
+-------------------------------------------------------------------
+* Qwen/Qwen2.5-3B-Instruct          (~3 B params, strong instruction following)
+* Qwen/Qwen2.5-1.5B-Instruct        (~1.5 B params, lighter alternative)
+* microsoft/Phi-3-mini-4k-instruct  (~3.8 B params, excellent reasoning)
+* microsoft/bitnet_b1_58-3B         (native 1.58-bit / ternary weights)
 
 Requirements
 ------------
     pip install transformers trl datasets peft bitsandbytes
 
-GGUF export (after training)
------------------------------
-    bash scripts/export_gguf.sh ./ft-model
+GGUF export (after training — to use the agen-model in Ollama)
+--------------------------------------------------------------
+    bash scripts/export_gguf.sh ./agen-model
 """
 
 from __future__ import annotations
@@ -49,13 +54,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="Qwen/Qwen2.5-0.5B-Instruct",
-        help="HuggingFace model ID or local path.",
+        default="Qwen/Qwen2.5-3B-Instruct",
+        help="HuggingFace model ID or local path (default: Qwen2.5-3B-Instruct → agen-model).",
     )
     parser.add_argument(
         "--output",
-        default="./ft-model",
-        help="Directory to save the fine-tuned model.",
+        default="./agen-model",
+        help="Directory to save the fine-tuned agen-model.",
     )
     parser.add_argument(
         "--epochs",
@@ -225,11 +230,11 @@ def main() -> None:
     print("Starting training...")
     trainer.train()
 
-    print(f"Saving model to {output_dir}")
+    print(f"Saving agen-model to {output_dir}")
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
 
-    print("Done. Next step: run scripts/export_gguf.sh to convert for llama.cpp/Ollama.")
+    print("Done. agen-model saved. Next step: run scripts/export_gguf.sh to convert for Ollama.")
 
 
 if __name__ == "__main__":

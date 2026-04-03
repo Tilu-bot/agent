@@ -42,12 +42,16 @@ _current_job_id: str | None = None
 
 class StartTrainingRequest(BaseModel):
     model: str = Field(
-        "Qwen/Qwen2.5-0.5B-Instruct",
-        description="HuggingFace model ID or local path to fine-tune.",
+        "Qwen/Qwen2.5-3B-Instruct",
+        description=(
+            "HuggingFace model ID to fine-tune. "
+            "Defaults to Qwen2.5-3B-Instruct (~3 B params) which becomes the "
+            "'agen-model' after fine-tuning."
+        ),
     )
     output_dir: str = Field(
-        "./ft-model",
-        description="Directory to write the fine-tuned model weights.",
+        "./agen-model",
+        description="Directory to write the fine-tuned agen-model weights.",
     )
     epochs: int = Field(3, ge=1, le=20, description="Number of training epochs.")
     batch_size: int = Field(4, ge=1, le=32)
@@ -164,7 +168,7 @@ async def _run_training(job_id: str, cfg: StartTrainingRequest) -> None:
         job["error"] = (proc_result.stderr or "")[-5000:]
         if proc_result.returncode == 0:
             job["status"] = "completed"
-            job["output"] += f"\n\nModel saved to: {cfg.output_dir}"
+            job["output"] += f"\n\nagen-model saved to: {cfg.output_dir}"
         else:
             job["status"] = "failed"
     except subprocess.TimeoutExpired:

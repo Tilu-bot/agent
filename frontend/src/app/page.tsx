@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { api, Run, ModelsResponse } from "@/lib/api";
-import styles from "./page.module.css";
+import { api, Run, ModelsResponse } from "@/lib/api";import styles from "./page.module.css";
 
 const SLOT_LABELS: Record<string, string> = {
   fast: "Fast (quick tasks)",
@@ -315,6 +314,9 @@ export default function HomePage() {
               {ollamaOk ? "● Ollama connected" : "● Ollama offline"}
             </span>
           )}
+          <Link href="/chat" className={styles.chatNavBtn}>
+            💬 Chat
+          </Link>
           <button
             className={styles.settingsBtn}
             onClick={() => setShowSettings(true)}
