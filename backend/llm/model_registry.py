@@ -121,13 +121,21 @@ _SPECIFICITY: dict[str, int] = {
 # ---------------------------------------------------------------------------
 
 class ModelProfile:
-    """Holds the inferred capability set for one Ollama model."""
+    """Holds the inferred capability set for one discovered model."""
 
-    __slots__ = ("name", "capabilities")
+    __slots__ = ("name", "capabilities", "backend", "base_url")
 
-    def __init__(self, name: str, capabilities: set[str]) -> None:
+    def __init__(
+        self,
+        name: str,
+        capabilities: set[str],
+        backend: str = "ollama",
+        base_url: str = "",
+    ) -> None:
         self.name = name
         self.capabilities = capabilities
+        self.backend = backend        # "ollama" | "llamacpp" | "hf"
+        self.base_url = base_url      # only set for llamacpp
 
     def score_for(self, capability: str) -> int:
         if capability not in self.capabilities:
@@ -135,7 +143,7 @@ class ModelProfile:
         return _SPECIFICITY.get(capability, 1)
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"ModelProfile({self.name!r}, caps={sorted(self.capabilities)})"
+        return f"ModelProfile({self.name!r}, caps={sorted(self.capabilities)}, backend={self.backend!r})"
 
 
 def _infer_capabilities(model_name: str) -> set[str]:
@@ -161,37 +169,75 @@ def _infer_capabilities(model_name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 class ModelRegistry:
-    """Discovers and profiles all models available in the local Ollama instance.
+    """Discovers and profiles models available across all local backends.
 
-    After calling :meth:`refresh` (one async Ollama call) the registry can
-    be queried synchronously::
+    Supported backends (probed automatically at :meth:`refresh` time):
+
+    * **Ollama** — the primary backend; probed via ``/api/tags``
+    * **llama.cpp** — probed at well-known localhost ports (8080-8083, 11435)
+    * **HuggingFace API** — models referenced as ``org/name`` strings are
+      routed through :class:`~backend.llm.hf_client.HFClient` automatically
+      by the router without explicit discovery
+
+    After :meth:`refresh` the registry can be queried synchronously::
 
         registry = ModelRegistry()
         await registry.refresh()
         model = registry.best_model_for("code")
         print(registry.capability_summary())
+        backend, url = registry.backend_for(model)   # "ollama" | "llamacpp"
     """
 
     def __init__(self) -> None:
         self._profiles: list[ModelProfile] = []
         self._available: set[str] = set()
+        # Maps model name → (backend, base_url) for non-Ollama backends
+        self._backend_map: dict[str, tuple[str, str]] = {}
         self.ready: bool = False
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     async def refresh(self) -> None:
-        """Probe Ollama for available models and build capability profiles."""
-        from backend.llm.ollama_client import OllamaClient  # avoid circular import
+        """Probe all local backends and build capability profiles."""
+        import asyncio
+        from backend.llm.ollama_client import OllamaClient        # avoid circular import
+        from backend.llm.llamacpp_client import LlamaCppClient    # noqa: WPS433
 
+        profiles: list[ModelProfile] = []
+        backend_map: dict[str, tuple[str, str]] = {}
+
+        # ── 1. Ollama ──────────────────────────────────────────────────────────
         try:
             names = await OllamaClient().list_models()
+            for n in names:
+                profiles.append(ModelProfile(n, _infer_capabilities(n), backend="ollama"))
         except Exception:
             names = []
 
-        self._available = set(names)
-        self._profiles = [
-            ModelProfile(n, _infer_capabilities(n)) for n in names
-        ]
+        # ── 2. llama.cpp servers at well-known ports ───────────────────────────
+        try:
+            servers = await asyncio.wait_for(LlamaCppClient.probe_servers(), timeout=5)
+            for server in servers:
+                server_models = await asyncio.wait_for(server.list_models(), timeout=5)
+                for m in server_models:
+                    model_id = m["id"]
+                    if model_id in {p.name for p in profiles}:
+                        continue  # already found via Ollama — skip duplicate
+                    profiles.append(
+                        ModelProfile(
+                            model_id,
+                            _infer_capabilities(model_id),
+                            backend="llamacpp",
+                            base_url=server._base_url,
+                        )
+                    )
+                    backend_map[model_id] = ("llamacpp", server._base_url)
+        except Exception:
+            pass  # llama.cpp not running — silently skip
+
+        self._profiles = profiles
+        self._available = {p.name for p in profiles}
+        self._backend_map = backend_map
         self.ready = True
 
     # ── Synchronous query API (safe to call after refresh()) ──────────────────
@@ -211,8 +257,17 @@ class ModelRegistry:
         )
         return ranked[0].name
 
+    def backend_for(self, model: str) -> tuple[str, str]:
+        """Return ``(backend, base_url)`` for *model*.
+
+        Returns ``("ollama", "")`` for Ollama models and HF models (the router
+        handles HF transparently).  Returns ``("llamacpp", base_url)`` for
+        models hosted by a local llama.cpp server.
+        """
+        return self._backend_map.get(model, ("ollama", ""))
+
     def is_model_available(self, model: str) -> bool:
-        """Return True if *model* appears in Ollama's model list."""
+        """Return True if *model* appears in any discovered backend."""
         if not self.ready:
             return True  # optimistic before first refresh
         return model in self._available
@@ -228,17 +283,19 @@ class ModelRegistry:
 
         Example output::
 
-            • llama3.2:3b: reasoning (general)
-            • qwen2.5-coder:3b: code
-            • nomic-embed-text: embedding
+            • llama3.2:3b [ollama]: reasoning
+            • qwen2.5-coder:3b [ollama]: code
+            • Qwen2.5-Coder-3B-Instruct [llamacpp]: code
         """
         if not self._profiles:
-            return "No Ollama models are currently installed."
+            return "No local models are currently available."
         lines: list[str] = []
         for p in sorted(self._profiles, key=lambda x: x.name):
             specific = sorted(p.capabilities - {"fast", "search"})
             label = ", ".join(specific) if specific else "general"
-            lines.append(f"  • {p.name}: {label}")
+            backend_tag = f"[{p.backend}]" if p.backend != "ollama" else ""
+            name_part = f"{p.name} {backend_tag}".strip()
+            lines.append(f"  • {name_part}: {label}")
         return "\n".join(lines)
 
     def slot_recommendation(self, slot: str, configured_model: str) -> str:

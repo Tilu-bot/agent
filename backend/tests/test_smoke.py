@@ -2849,3 +2849,264 @@ def test_registry_not_initialized_does_not_break_router():
         assert model  # non-empty
     finally:
         _mr_module._registry = original
+
+
+# ── llama.cpp client discovery tests ─────────────────────────────────────────
+
+def test_llamacpp_client_imports():
+    from backend.llm.llamacpp_client import LlamaCppClient, _DISCOVERY_PORTS
+    assert len(_DISCOVERY_PORTS) >= 4
+    assert 8080 in _DISCOVERY_PORTS
+    c = LlamaCppClient("http://localhost:8080")
+    assert c._base_url == "http://localhost:8080"
+
+
+# ── Agent message bus tests ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_message_bus_post_and_retrieve():
+    from backend.agents.message_bus import MessageBus, AgentMessage
+
+    bus = MessageBus()
+    await bus.post(AgentMessage(
+        kind="status",
+        from_agent="coder",
+        content="Working on it",
+    ))
+    msgs = bus.all_messages()
+    assert len(msgs) == 1
+    assert msgs[0].from_agent == "coder"
+    assert msgs[0].kind == "status"
+
+
+@pytest.mark.asyncio
+async def test_message_bus_knowledge_share():
+    from backend.agents.message_bus import MessageBus
+
+    bus = MessageBus()
+    await bus.share_knowledge("researcher", "api_url", "https://example.com/v1")
+    shares = bus.knowledge_shares()
+    assert len(shares) == 1
+    assert shares[0].data["key"] == "api_url"
+    assert shares[0].data["value"] == "https://example.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_message_bus_help_request_timeout():
+    from backend.agents.message_bus import MessageBus
+
+    bus = MessageBus()
+    # No one responds → should return None after timeout
+    result = await bus.request_help(
+        from_agent="coder",
+        topic="missing_library",
+        context="ImportError: no module named foo",
+        timeout=0.1,  # short timeout for testing
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_message_bus_help_request_with_response():
+    from backend.agents.message_bus import MessageBus, AgentMessage
+    import asyncio
+
+    bus = MessageBus()
+
+    async def _responder():
+        # Wait a bit then find the pending request and respond
+        await asyncio.sleep(0.05)
+        reqs = bus.pending_help_requests()
+        if reqs:
+            await bus.respond_to_help(
+                "researcher", reqs[0].message_id, "Try installing scipy with pip install scipy"
+            )
+
+    asyncio.create_task(_responder())
+    result = await bus.request_help(
+        from_agent="coder",
+        topic="missing scipy",
+        context="ImportError: no module named scipy",
+        timeout=2.0,
+    )
+    assert result is not None
+    assert "scipy" in result.lower()
+
+
+# ── Knowledge store tests ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_knowledge_store_add_get():
+    from backend.agents.knowledge import KnowledgeStore
+
+    store = KnowledgeStore()
+    await store.add("api_endpoint", "https://api.example.com", "researcher")
+    fact = await store.get("api_endpoint")
+    assert fact is not None
+    assert fact.value == "https://api.example.com"
+    assert fact.source_agent == "researcher"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_query():
+    from backend.agents.knowledge import KnowledgeStore
+
+    store = KnowledgeStore()
+    await store.add("scipy install", "pip install scipy 1.12", "researcher")
+    await store.add("pandas version", "pandas 2.0 required", "coder")
+
+    results = await store.query("scipy library installation")
+    assert len(results) >= 1
+    assert any("scipy" in f.key for f in results)
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_context_block():
+    from backend.agents.knowledge import KnowledgeStore
+
+    store = KnowledgeStore()
+    await store.add("fact1", "the answer is 42", "agent_a")
+    block = await store.context_block()
+    assert "Shared knowledge" in block
+    assert "fact1" in block
+    assert "42" in block
+
+
+@pytest.mark.asyncio
+async def test_knowledge_store_registry():
+    from backend.agents.knowledge import get_store, clear_store
+
+    store = await get_store("test-run-99")
+    await store.add("x", "value", "agent")
+    same = await get_store("test-run-99")
+    assert (await same.get("x")) is not None
+    await clear_store("test-run-99")
+    fresh = await get_store("test-run-99")
+    assert (await fresh.get("x")) is None
+
+
+# ── Agent pool + bidding tests ────────────────────────────────────────────────
+
+def test_agent_spec_bid_role_match():
+    from backend.agents.agent_pool import AgentSpec
+    from backend.models.db import Task
+
+    agent = AgentSpec(
+        name="coder-qwen",
+        model="qwen2.5-coder:3b",
+        capabilities={"code", "fast", "search"},
+        primary_role="coder",
+    )
+    task = Task(id="t1", run_id="r1", title="Write a Python function",
+                agent_role="coder")
+    bid = agent.bid(task)
+    assert bid >= 60  # role + cap match
+
+
+def test_agent_spec_bid_no_match():
+    from backend.agents.agent_pool import AgentSpec
+    from backend.models.db import Task
+
+    agent = AgentSpec(
+        name="embed-nomic",
+        model="nomic-embed-text",
+        capabilities={"embedding"},
+        primary_role="tool_operator",
+    )
+    task = Task(id="t1", run_id="r1", title="Write a Python script",
+                agent_role="coder")
+    bid = agent.bid(task)
+    assert bid < 40  # no capability match
+
+
+def test_agent_pool_auction_prefers_specialist():
+    from backend.agents.agent_pool import AgentPool, AgentSpec
+    from backend.models.db import Task
+
+    pool = AgentPool([
+        AgentSpec("coder", "qwen2.5-coder:3b", {"code", "fast", "search"}, "coder"),
+        AgentSpec("researcher", "llama3.2:3b", {"reasoning", "fast", "search"}, "researcher"),
+    ])
+    task = Task(id="t1", run_id="r1", title="Implement a sorting algorithm",
+                agent_role="coder", depends_on=[])
+    winner = pool.auction(task)
+    assert winner.primary_role == "coder"
+
+
+def test_agent_pool_auction_fallback_to_general():
+    from backend.agents.agent_pool import AgentPool, AgentSpec
+    from backend.models.db import Task
+
+    pool = AgentPool([
+        AgentSpec("general", "llama3.2:3b", {"reasoning", "fast", "search"}, "analyst"),
+    ])
+    task = Task(id="t1", run_id="r1", title="Write a report on AI trends",
+                agent_role="writer", depends_on=[])
+    winner = pool.auction(task)
+    assert winner.model == "llama3.2:3b"
+
+
+def test_agent_pool_from_registry():
+    from backend.agents.agent_pool import AgentPool
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}, "ollama"),
+        ModelProfile("qwen2.5-coder:3b", {"code", "fast", "search"}, "ollama"),
+    ]
+    reg._available = {"llama3.2:3b", "qwen2.5-coder:3b"}
+    reg.ready = True
+
+    pool = AgentPool.from_registry(reg)
+    assert len(pool) > 0
+    # coder agent should exist for qwen2.5-coder
+    names = [a.name for a in pool.agents()]
+    assert any("coder" in n for n in names)
+
+
+def test_cooperative_config_defaults():
+    from backend.config import AppConfig
+    cfg = AppConfig()
+    assert cfg.cooperative.enabled is True
+    assert cfg.cooperative.help_timeout_seconds > 0
+
+
+def test_new_event_kinds_exist():
+    from backend.models.db import EventKind
+    assert EventKind.agent_bid == "agent_bid"
+    assert EventKind.help_request == "help_request"
+    assert EventKind.help_response == "help_response"
+    assert EventKind.knowledge_share == "knowledge_share"
+
+
+def test_registry_backend_for_default():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("llama3.2:3b", {"reasoning", "fast", "search"}, "ollama"),
+    ]
+    reg._available = {"llama3.2:3b"}
+    reg._backend_map = {}
+    reg.ready = True
+
+    backend, url = reg.backend_for("llama3.2:3b")
+    assert backend == "ollama"
+    assert url == ""
+
+
+def test_registry_backend_for_llamacpp():
+    from backend.llm.model_registry import ModelRegistry, ModelProfile
+
+    reg = ModelRegistry()
+    reg._profiles = [
+        ModelProfile("MyModel-7B", {"code", "fast", "search"}, "llamacpp", "http://localhost:8080"),
+    ]
+    reg._available = {"MyModel-7B"}
+    reg._backend_map = {"MyModel-7B": ("llamacpp", "http://localhost:8080")}
+    reg.ready = True
+
+    backend, url = reg.backend_for("MyModel-7B")
+    assert backend == "llamacpp"
+    assert url == "http://localhost:8080"
