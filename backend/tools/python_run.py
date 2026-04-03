@@ -34,8 +34,21 @@ from typing import Any
 from backend.config import get_config
 from backend.tools.bus import BaseTool, ToolResult
 
-# Characters that indicate shell-injection attempts — block them upfront.
-_BLOCKED_PATTERNS = ("__import__", "subprocess", "os.system", "eval(", "exec(")
+# Patterns that indicate potentially dangerous code — block them upfront.
+# This is a defence-in-depth layer; the subprocess env is already stripped of
+# most capabilities, but these patterns can be used to escape the sandbox.
+_BLOCKED_PATTERNS = (
+    "__import__",   # dynamic import bypass
+    "subprocess",   # spawn child processes
+    "os.system",    # shell execution
+    "os.popen",     # shell pipe
+    "os.exec",      # replace current process (os.execv, os.execve, …)
+    "eval(",        # dynamic code eval
+    "exec(",        # dynamic code exec
+    "importlib",    # alternative import mechanism
+    "ctypes",       # low-level C extension access
+    "socket",       # raw network access
+)
 
 
 def _is_dangerous(code: str) -> bool:

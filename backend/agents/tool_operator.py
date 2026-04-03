@@ -32,9 +32,9 @@ _SYSTEM_HEADER = (
 
 _SYSTEM_FOOTER = (
     "\nReturn ONLY valid JSON:\n"
-    '{"tool": "<tool_name>", "params": { ... }}\n'
+    '{"tool": "<tool_name>", "params": { ... }, "reasoning": "<one sentence: why this tool>"}\n'
     "Or if no tool is needed:\n"
-    '{"tool": null, "result": "<direct answer>"}\n'
+    '{"tool": null, "result": "<direct answer>", "reasoning": "<one sentence explanation>"}\n'
     "If a previous attempt failed, learn from the error and try a different approach."
 )
 
@@ -115,6 +115,7 @@ class ToolOperator:
                 return {
                     "kind": "direct",
                     "result": tool_call.get("result", raw),
+                    "reasoning": tool_call.get("reasoning", ""),
                     "tool_call": None,
                     "tool_result": None,
                     "attempts": attempt,
@@ -131,6 +132,7 @@ class ToolOperator:
                 return {
                     "kind": "tool",
                     "result": tool_result.output,
+                    "reasoning": tool_call.get("reasoning", ""),
                     "tool_call": tool_call,
                     "tool_result": tool_result.to_dict(),
                     "attempts": attempt,
@@ -153,6 +155,7 @@ class ToolOperator:
         return {
             "kind": "tool",
             "result": last_error,
+            "reasoning": tool_call.get("reasoning", ""),
             "tool_call": tool_call,
             "tool_result": tool_result.to_dict() if tool_result is not None else None,
             "attempts": _MAX_RETRIES,

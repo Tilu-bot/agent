@@ -4,6 +4,8 @@
   flex-direction: column;
 }
 
+/* ── Header ──────────────────────────────────────────────────────────────────*/
+
 .header {
   display: flex;
   align-items: center;
@@ -20,6 +22,15 @@
   color: var(--text-muted);
   white-space: nowrap;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.back:hover {
+  color: var(--text);
+  text-decoration: none;
 }
 
 .runInfo {
@@ -27,6 +38,8 @@
   align-items: center;
   gap: 12px;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 
 .runGoal {
@@ -35,6 +48,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .cancelBtn {
@@ -42,16 +57,16 @@
   padding: 4px 12px;
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid #ef5350;
+  border: 1px solid var(--red);
   border-radius: 6px;
   background: transparent;
-  color: #ef5350;
+  color: var(--red);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .cancelBtn:hover:not(:disabled) {
-  background: rgba(239, 83, 80, 0.1);
+  background: var(--red-dim);
 }
 
 .cancelBtn:disabled {
@@ -59,39 +74,94 @@
   cursor: not-allowed;
 }
 
-/* ── Synthesis summary banner ─────────────────────────────────────────────── */
+/* ── Live indicator ───────────────────────────────────────────────────────── */
 
-.summaryBanner {
-  background: linear-gradient(135deg, rgba(108, 99, 255, 0.12), rgba(255, 213, 79, 0.08));
-  border-left: 3px solid var(--accent, #6c63ff);
-  padding: 16px 24px;
+.liveBar {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 24px;
+  background: var(--blue-dim);
+  border-bottom: 1px solid rgba(66, 165, 245, 0.2);
+  font-size: 13px;
+  color: var(--blue);
 }
 
-.summaryLabel {
-  font-size: 12px;
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* ── Answer / Summary Section ─────────────────────────────────────────────── */
+
+.answerSection {
+  background: linear-gradient(135deg, rgba(108, 99, 255, 0.08), rgba(66, 165, 245, 0.05));
+  border-bottom: 1px solid var(--border);
+  padding: 24px;
+  animation: fade-in 0.3s ease;
+}
+
+.answerHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.answerIcon {
+  font-size: 18px;
+  color: var(--accent-light);
+}
+
+.answerTitle {
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--accent-light, #a99dff);
+  letter-spacing: 0.8px;
+  color: var(--accent-light);
 }
 
-.summaryText {
+.answerBody {
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.7;
   color: var(--text);
-  white-space: pre-wrap;
+}
+
+.answerBody p {
   margin: 0;
 }
 
+.answerBody ul,
+.answerBody ol {
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.answerBody li {
+  line-height: 1.6;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+
 .tabs {
   display: flex;
-  gap: 4px;
-  padding: 10px 24px;
+  gap: 2px;
+  padding: 8px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 53px;
+  z-index: 9;
 }
 
 .tab {
@@ -101,6 +171,12 @@
   padding: 6px 14px;
   border-radius: 6px;
   font-size: 13px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--surface2);
 }
 
 .tabActive {
@@ -109,149 +185,469 @@
   border-color: var(--border);
 }
 
+/* ── Main ─────────────────────────────────────────────────────────────────── */
+
 .main {
   flex: 1;
   max-width: 900px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 20px 16px 40px;
   width: 100%;
 }
 
-/* Tasks */
-.taskList {
+/* ── Timeline (Events) ────────────────────────────────────────────────────── */
+
+.timelineList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  position: relative;
+  padding: 4px 0;
 }
 
-.taskCard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
+.timelineEntry {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: 0;
+  position: relative;
+  animation: fade-in 0.2s ease;
 }
 
-.taskCard[data-status="running"] {
-  border-color: var(--blue);
+/* Vertical connecting line */
+.timelineEntry:not(:last-child) .timelineLine {
+  position: absolute;
+  left: 14px;
+  top: 30px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-subtle);
 }
 
-.taskCard[data-status="completed"] {
+.timelineLine {
+  display: none;
+}
+
+.timelineDot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: var(--surface2);
+  border: 2px solid var(--border);
+  z-index: 1;
+  margin-right: 12px;
+  margin-top: 8px;
+}
+
+.timelineDot[data-kind="synthesis"] {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.timelineDot[data-kind="verification"] {
+  background: var(--green-dim);
   border-color: var(--green);
 }
 
-.taskCard[data-status="failed"] {
-  border-color: var(--red);
+.timelineDot[data-kind="tool_call"] {
+  background: var(--yellow-dim);
+  border-color: var(--yellow);
 }
 
-.taskHeader {
+.timelineDot[data-kind="tool_result"] {
+  background: var(--surface3);
+  border-color: var(--border);
+}
+
+.timelineDot[data-kind="plan_created"] {
+  background: var(--blue-dim);
+  border-color: var(--blue);
+}
+
+.timelineDot[data-kind="reflexion"] {
+  background: var(--purple-dim);
+  border-color: var(--purple);
+}
+
+.timelineDot[data-kind="thinking"] {
+  background: rgba(0, 188, 212, 0.12);
+  border-color: rgba(0, 188, 212, 0.7);
+}
+
+.timelineBody {
+  flex: 1;
+  padding: 8px 0 16px;
+  min-width: 0;
+}
+
+.timelineHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
-.taskTitle {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.taskDesc {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.taskRole {
+.timelineRole {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 
-.taskResult {
-  font-size: 12px;
-  background: var(--surface2);
+.toolBadge {
+  display: inline-block;
+  background: var(--yellow-dim);
+  color: var(--yellow);
+  border: 1px solid rgba(255, 183, 77, 0.3);
   border-radius: 4px;
-  padding: 8px;
-  overflow: auto;
-  max-height: 120px;
-  white-space: pre-wrap;
-  word-break: break-all;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
-/* Events */
-.eventList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.resultBadge {
+  display: inline-block;
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.eventRow {
+.synthBadge {
+  display: inline-block;
+  background: var(--accent-dim);
+  color: var(--accent-light);
+  border: 1px solid rgba(108, 99, 255, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.planBadge {
+  display: inline-block;
+  background: var(--blue-dim);
+  color: var(--blue);
+  border: 1px solid rgba(66, 165, 245, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.thinkingBadge {
+  display: inline-block;
+  background: rgba(0, 188, 212, 0.1);
+  color: rgb(0, 188, 212);
+  border: 1px solid rgba(0, 188, 212, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.timelineTime {
+  color: var(--text-subtle);
+  font-size: 11px;
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineContent {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 10px 14px;
 }
 
-.eventMeta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 4px;
+.timelineContent.synthContent {
+  background: linear-gradient(135deg, rgba(108, 99, 255, 0.08), rgba(66, 165, 245, 0.04));
+  border-color: rgba(108, 99, 255, 0.3);
 }
 
-.eventIcon {
-  font-size: 16px;
-}
-
-.eventRole {
+.timelineContent.toolCallContent {
+  border-color: rgba(255, 183, 77, 0.25);
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
   font-size: 12px;
-  font-weight: 700;
 }
 
-.eventTime {
+.timelineContent.toolResultContent {
+  border-color: var(--border-subtle);
+  background: var(--surface3);
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
   color: var(--text-muted);
-  font-size: 11px;
-  margin-left: auto;
+}
+
+.timelineContent.thinkingContent {
+  border-color: rgba(0, 188, 212, 0.2);
+  background: rgba(0, 188, 212, 0.04);
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .expandBtn {
-  background: var(--surface2);
-  color: var(--text-muted);
+  background: transparent;
+  color: var(--text-subtle);
+  border: 1px solid var(--border-subtle);
   padding: 2px 8px;
   font-size: 11px;
   border-radius: 4px;
+  margin-top: 6px;
+  transition: color 0.15s, border-color 0.15s;
 }
 
-.eventContent {
-  font-size: 13px;
-  color: var(--text);
+.expandBtn:hover {
+  color: var(--text-muted);
+  border-color: var(--border);
+  opacity: 1;
 }
 
 .eventData {
   margin-top: 8px;
   font-size: 11px;
-  background: var(--surface2);
-  border-radius: 4px;
-  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
   overflow: auto;
   max-height: 300px;
   white-space: pre-wrap;
   word-break: break-all;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  color: var(--text-muted);
 }
 
-/* Artifacts */
-.artifactList {
+/* Live trailing indicator */
+.timelineLive {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 4px 42px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.timelineLiveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* ── Tasks (Step Tracker) ─────────────────────────────────────────────────── */
+
+.taskList {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
+.progressHeader {
+  margin-bottom: 16px;
+}
+
+.progressLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.progressTrack {
+  background: var(--surface2);
+  border-radius: 4px;
+  height: 4px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--blue));
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.stepCard {
+  display: flex;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: border-color 0.15s;
+  animation: fade-in 0.2s ease;
+}
+
+.stepCard[data-status="running"] {
+  border-color: rgba(66, 165, 245, 0.4);
+  background: linear-gradient(135deg, var(--surface), var(--blue-dim));
+}
+
+.stepCard[data-status="completed"] {
+  border-color: rgba(76, 175, 125, 0.3);
+}
+
+.stepCard[data-status="failed"] {
+  border-color: rgba(239, 83, 80, 0.3);
+}
+
+.stepCard[data-status="skipped"] {
+  opacity: 0.6;
+}
+
+.stepIndicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  border: 2px solid var(--border);
+  background: var(--surface2);
+  margin-top: 1px;
+}
+
+.stepCard[data-status="completed"] .stepIndicator {
+  background: var(--green-dim);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.stepCard[data-status="failed"] .stepIndicator {
+  background: var(--red-dim);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.stepCard[data-status="running"] .stepIndicator {
+  border-color: var(--blue);
+}
+
+.stepNum {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.stepCheck {
+  font-weight: 700;
+}
+
+.stepFail {
+  font-weight: 700;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.stepContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.stepTitle {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.stepDesc {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.stepMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agentPill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}
+
+.resultToggle {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 2px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.resultToggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.stepResult {
+  font-size: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 160px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* ── Artifacts ────────────────────────────────────────────────────────────── */
+
+.artifactList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .artifactRow {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 14px;
+  border-radius: 10px;
+  padding: 12px 16px;
+  transition: border-color 0.15s;
+}
+
+.artifactRow:hover {
+  border-color: rgba(108, 99, 255, 0.3);
 }
 
 .artifactHeader {
@@ -260,34 +656,72 @@
   gap: 10px;
 }
 
+.artifactIcon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
 .artifactName {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .artifactMeta {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: 11px;
-  font-family: monospace;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  white-space: nowrap;
+}
+
+.artifactBtns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.artifactBtn {
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.artifactBtn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  opacity: 1;
 }
 
 .artifactContent {
-  margin-top: 8px;
-  font-size: 11px;
-  background: var(--surface2);
-  border-radius: 4px;
-  padding: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 12px;
   overflow: auto;
   max-height: 400px;
   white-space: pre-wrap;
   word-break: break-all;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  color: var(--text-muted);
 }
+
+/* ── Empty & misc ─────────────────────────────────────────────────────────── */
 
 .empty {
   color: var(--text-muted);
   text-align: center;
-  padding: 32px;
+  padding: 48px 32px;
+  font-size: 14px;
 }
 
 .error {
@@ -298,4 +732,117 @@
 .loading {
   color: var(--text-muted);
   padding: 24px;
+  text-align: center;
+}
+
+
+/* ── Terminal output (tool_result with stdout/stderr) ───────────────────────*/
+
+.terminal {
+  margin-top: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+}
+
+.termStdout {
+  margin: 0;
+  padding: 10px 12px;
+  background: #0d1117;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.termStderr {
+  margin: 0;
+  padding: 10px 12px;
+  background: #1a0a0a;
+  color: #f85149;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.exitCode {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-subtle);
+}
+
+.exitCode[data-ok="true"] {
+  color: var(--green, #4caf7d);
+}
+
+.exitCode[data-ok="false"] {
+  color: var(--red, #ef5350);
+}
+
+/* ── Shell command block (tool_call preview) ────────────────────────────────*/
+
+.commandBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  color: #c9d1d9;
+  overflow-x: auto;
+}
+
+.cmdPrompt {
+  color: #3fb950;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* ── Python code block (tool_call preview) ──────────────────────────────────*/
+
+.toolCodeBlock {
+  margin-top: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toolCodeHeader {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--surface3);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 26px;
+}
+
+.toolCodeLang {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+.toolCodePre {
+  margin: 0;
+  padding: 10px 12px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre;
 }

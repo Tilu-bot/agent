@@ -134,6 +134,10 @@ class Orchestrator:
 
             # ── 2. Plan (tool-aware + memory-aware, optionally via debate) ────
             tool_names = self._tool_bus.list_tools()
+            await self._log_event(
+                run.id, EventKind.thinking, "planner",
+                "Analyzing the goal and deciding how to break it into steps…",
+            )
             if self._cfg.debate.enabled:
                 await self._log_event(
                     run.id, EventKind.agent_message, "debater",
@@ -320,7 +324,21 @@ class Orchestrator:
         context = await self._budget_context(raw_context)
 
         try:
+            await self._log_event(
+                run.id, EventKind.thinking, task.agent_role or "agent",
+                f"Working on: {task.title}."
+                + (f" Description: {task.description}" if task.description else ""),
+                task_id=task.id, session=session,
+            )
             outcome = await self._tool_op.execute_task(task, context, run_id=run.id)
+
+            # Surface the agent's reasoning about why it chose a particular tool.
+            if outcome.get("reasoning"):
+                await self._log_event(
+                    run.id, EventKind.thinking, task.agent_role or "agent",
+                    outcome["reasoning"],
+                    task_id=task.id, session=session,
+                )
 
             # Log tool call + result
             if outcome.get("tool_call"):
@@ -381,6 +399,14 @@ class Orchestrator:
 
                 # Re-execute with correction injected as additional context
                 outcome = await self._tool_op.execute_task(task, context, reflection=correction, run_id=run.id)
+
+                # Surface the agent's revised reasoning after correction.
+                if outcome.get("reasoning"):
+                    await self._log_event(
+                        run.id, EventKind.thinking, task.agent_role or "agent",
+                        f"Revised approach: {outcome['reasoning']}",
+                        task_id=task.id, session=session,
+                    )
 
                 if outcome.get("tool_call"):
                     await self._log_event(run.id, EventKind.tool_call, "tool_operator",

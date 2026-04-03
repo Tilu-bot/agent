@@ -44,7 +44,7 @@ async def get_db() -> AsyncSession:
 # ── Request / response models ──────────────────────────────────────────────────
 
 class CreateRunRequest(BaseModel):
-    goal: str = Field(..., min_length=1, description="Goal for the agent run")
+    goal: str = Field(..., min_length=1, max_length=10_000, description="Goal for the agent run")
     models: dict[str, str] | None = Field(
         None,
         description=(

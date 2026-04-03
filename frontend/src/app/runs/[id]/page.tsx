@@ -7,12 +7,23 @@ import styles from "./run.module.css";
 
 const KIND_ICON: Record<string, string> = {
   agent_message: "💬",
-  tool_call: "🔧",
+  tool_call: "⚡",
   tool_result: "📦",
   plan_created: "📋",
-  verification: "✅",
-  reflexion: "🔄",
-  synthesis: "🎯",
+  verification: "✓",
+  reflexion: "↻",
+  synthesis: "✦",
+  thinking: "🧠",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  tool_call: "tool use",
+  tool_result: "result",
+  plan_created: "plan",
+  verification: "verify",
+  reflexion: "reflexion",
+  synthesis: "synthesis",
+  thinking: "thinking",
 };
 
 const ROLE_COLOR: Record<string, string> = {
@@ -27,33 +38,109 @@ const ROLE_COLOR: Record<string, string> = {
   mathematician: "#80deea",
 };
 
+const ARTIFACT_ICON: Record<string, string> = {
+  md: "📄",
+  txt: "📄",
+  json: "📋",
+  py: "🐍",
+  js: "📜",
+  ts: "📜",
+  csv: "📊",
+  png: "🖼",
+  jpg: "🖼",
+  pdf: "📕",
+};
+
+function artifactIcon(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  return ARTIFACT_ICON[ext] ?? "📎";
+}
+
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
 }
 
-function TaskCard({ task }: { task: Task }) {
+/** Renders a run summary with basic paragraph / list formatting. */
+function SummaryBody({ text }: { text: string }) {
+  const blocks = text.split(/\n{2,}/).filter(Boolean);
   return (
-    <div className={styles.taskCard} data-status={task.status}>
-      <div className={styles.taskHeader}>
-        <span className={styles.taskTitle}>{task.title}</span>
-        <StatusBadge status={task.status} />
+    <div className={styles.answerBody}>
+      {blocks.map((block, i) => {
+        const lines = block.split("\n").filter(Boolean);
+        const isList = lines.every((l) => /^[\*\-]\s/.test(l));
+        const isNumbered = lines.every((l) => /^\d+\.\s/.test(l));
+        if (isList) {
+          return (
+            <ul key={i}>
+              {lines.map((l, j) => (
+                <li key={j}>{l.replace(/^[\*\-]\s+/, "")}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (isNumbered) {
+          return (
+            <ol key={i}>
+              {lines.map((l, j) => (
+                <li key={j}>{l.replace(/^\d+\.\s+/, "")}</li>
+              ))}
+            </ol>
+          );
+        }
+        return <p key={i}>{block}</p>;
+      })}
+    </div>
+  );
+}
+
+function TaskCard({ task, index }: { task: Task; index: number }) {
+  const [showResult, setShowResult] = useState(false);
+  const color = ROLE_COLOR[task.agent_role ?? ""] ?? "#8890b0";
+
+  return (
+    <div className={styles.stepCard} data-status={task.status}>
+      <div className={styles.stepIndicator}>
+        {task.status === "running" ? (
+          <div className={styles.spinner} />
+        ) : task.status === "completed" ? (
+          <span className={styles.stepCheck}>✓</span>
+        ) : task.status === "failed" ? (
+          <span className={styles.stepFail}>✕</span>
+        ) : task.status === "skipped" ? (
+          <span className={styles.stepFail}>—</span>
+        ) : (
+          <span className={styles.stepNum}>{index + 1}</span>
+        )}
       </div>
-      {task.description && (
-        <p className={styles.taskDesc}>{task.description}</p>
-      )}
-      {task.agent_role && (
-        <span
-          className={styles.taskRole}
-          style={{ color: ROLE_COLOR[task.agent_role] ?? "#8890b0" }}
-        >
-          {task.agent_role}
-        </span>
-      )}
-      {task.result && (
-        <pre className={styles.taskResult}>{task.result.slice(0, 400)}</pre>
-      )}
+      <div className={styles.stepContent}>
+        <div className={styles.stepTitle}>{task.title}</div>
+        {task.description && (
+          <div className={styles.stepDesc}>{task.description}</div>
+        )}
+        <div className={styles.stepMeta}>
+          {task.agent_role && (
+            <span
+              className={styles.agentPill}
+              style={{ color, borderColor: color }}
+            >
+              {task.agent_role}
+            </span>
+          )}
+          {task.result && (
+            <button
+              className={styles.resultToggle}
+              onClick={() => setShowResult((v) => !v)}
+            >
+              {showResult ? "Hide result" : "Show result"}
+            </button>
+          )}
+        </div>
+        {showResult && task.result && (
+          <pre className={styles.stepResult}>{task.result.slice(0, 600)}</pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -62,32 +149,130 @@ function EventRow({ event }: { event: AgentEvent }) {
   const [expanded, setExpanded] = useState(false);
   const icon = KIND_ICON[event.kind] ?? "•";
   const color = ROLE_COLOR[event.agent_role ?? ""] ?? "#8890b0";
+  const isToolCall = event.kind === "tool_call";
+  const isToolResult = event.kind === "tool_result";
+  const isSynthesis = event.kind === "synthesis";
+  const isPlan = event.kind === "plan_created";
+  const isThinking = event.kind === "thinking";
+  const kindLabel = KIND_LABEL[event.kind];
 
-  return (
-    <div className={styles.eventRow}>
-      <div className={styles.eventMeta}>
-        <span className={styles.eventIcon}>{icon}</span>
-        <span className={styles.eventRole} style={{ color }}>
-          {event.agent_role ?? "system"}
-        </span>
-        <span className={styles.eventTime}>
-          {new Date(event.created_at).toLocaleTimeString()}
-        </span>
-        {Boolean(event.data) && (
-          <button
-            className={styles.expandBtn}
-            onClick={() => setExpanded((v) => !v)}
+  let contentClass = styles.timelineContent;
+  if (isSynthesis) contentClass += " " + styles.synthContent;
+  else if (isToolCall) contentClass += " " + styles.toolCallContent;
+  else if (isToolResult) contentClass += " " + styles.toolResultContent;
+  else if (isThinking) contentClass += " " + styles.thinkingContent;
+
+  // Rich rendering helpers
+  const d = event.data as Record<string, unknown> | null | undefined;
+
+  /** Render a shell command or Python code from a tool_call event. */
+  function ToolCallPreview() {
+    if (!d) return null;
+    const tool = d.tool as string | undefined;
+    const params = d.params as Record<string, unknown> | undefined;
+    if (tool === "shell.exec" && params?.command) {
+      return (
+        <div className={styles.commandBlock}>
+          <span className={styles.cmdPrompt}>$</span>
+          <code>{String(params.command)}</code>
+        </div>
+      );
+    }
+    if (tool === "python.run" && params?.code) {
+      return (
+        <div className={styles.toolCodeBlock}>
+          <div className={styles.toolCodeHeader}>
+            <span className={styles.toolCodeLang}>python</span>
+          </div>
+          <pre className={styles.toolCodePre}><code>{String(params.code)}</code></pre>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  /** Render stdout / stderr / exit_code from a tool_result event. */
+  function TerminalOutput() {
+    if (!d) return null;
+    const stdout = (d.data as Record<string, unknown>)?.stdout as string | undefined
+      ?? d.stdout as string | undefined;
+    const stderr = (d.data as Record<string, unknown>)?.stderr as string | undefined
+      ?? d.stderr as string | undefined;
+    const exitCode = (d.data as Record<string, unknown>)?.exit_code
+      ?? d.exit_code;
+
+    if (!stdout && !stderr && exitCode === undefined) return null;
+    return (
+      <div className={styles.terminal}>
+        {stdout && stdout.trim() && (
+          <pre className={styles.termStdout}>{stdout}</pre>
+        )}
+        {stderr && stderr.trim() && (
+          <pre className={styles.termStderr}>{stderr}</pre>
+        )}
+        {exitCode !== undefined && exitCode !== null && (
+          <div
+            className={styles.exitCode}
+            data-ok={exitCode === 0}
           >
-            {expanded ? "▲" : "▼"}
-          </button>
+            exit {String(exitCode)}
+          </div>
         )}
       </div>
-      <div className={styles.eventContent}>{event.content}</div>
-      {expanded && Boolean(event.data) && (
-        <pre className={styles.eventData}>
-          {JSON.stringify(event.data, null, 2)}
-        </pre>
-      )}
+    );
+  }
+
+  return (
+    <div className={styles.timelineEntry}>
+      <div className={styles.timelineLine} />
+      <div className={styles.timelineDot} data-kind={event.kind}>
+        {icon}
+      </div>
+      <div className={styles.timelineBody}>
+        <div className={styles.timelineHeader}>
+          <span className={styles.timelineRole} style={{ color }}>
+            {event.agent_role ?? "system"}
+          </span>
+          {isToolCall && <span className={styles.toolBadge}>{kindLabel}</span>}
+          {isToolResult && (
+            <span className={styles.resultBadge}>{kindLabel}</span>
+          )}
+          {isSynthesis && (
+            <span className={styles.synthBadge}>{kindLabel}</span>
+          )}
+          {isPlan && <span className={styles.planBadge}>{kindLabel}</span>}
+          {isThinking && (
+            <span className={styles.thinkingBadge}>{kindLabel}</span>
+          )}
+          <span className={styles.timelineTime}>
+            {new Date(event.created_at).toLocaleTimeString()}
+          </span>
+        </div>
+
+        <div className={contentClass}>{event.content}</div>
+
+        {/* Tool call: show command / code preview */}
+        {isToolCall && <ToolCallPreview />}
+
+        {/* Tool result: show terminal output */}
+        {isToolResult && <TerminalOutput />}
+
+        {Boolean(event.data) && (
+          <>
+            <button
+              className={styles.expandBtn}
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? "▲ Hide data" : "▼ Show data"}
+            </button>
+            {expanded && (
+              <pre className={styles.eventData}>
+                {JSON.stringify(event.data, null, 2)}
+              </pre>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -129,16 +314,30 @@ function ArtifactRow({
   return (
     <div className={styles.artifactRow}>
       <div className={styles.artifactHeader}>
-        <span className={styles.artifactName}>📎 {artifact.name}</span>
-        <span className={styles.artifactMeta}>
-          {artifact.sha256 ? `sha256:${artifact.sha256.slice(0, 12)}…` : ""}
-        </span>
-        <button className={styles.expandBtn} onClick={download} title="Download file" aria-label="Download artifact">
-          ⬇
-        </button>
-        <button className={styles.expandBtn} onClick={load} disabled={loading}>
-          {loading ? "…" : content !== null ? "Hide" : "View"}
-        </button>
+        <span className={styles.artifactIcon}>{artifactIcon(artifact.name)}</span>
+        <span className={styles.artifactName}>{artifact.name}</span>
+        {artifact.sha256 && (
+          <span className={styles.artifactMeta}>
+            sha256:{artifact.sha256.slice(0, 10)}…
+          </span>
+        )}
+        <div className={styles.artifactBtns}>
+          <button
+            className={styles.artifactBtn}
+            onClick={download}
+            title="Download file"
+            aria-label="Download artifact"
+          >
+            ⬇ Download
+          </button>
+          <button
+            className={styles.artifactBtn}
+            onClick={load}
+            disabled={loading}
+          >
+            {loading ? "…" : content !== null ? "Hide" : "View"}
+          </button>
+        </div>
       </div>
       {content !== null && (
         <pre className={styles.artifactContent}>{content.slice(0, 4000)}</pre>
@@ -176,7 +375,6 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
   }, [runId]);
 
   useEffect(() => {
-    // Always do one full REST load first so the page is populated instantly.
     load();
 
     const es = new EventSource(api.streamUrl(runId));
@@ -211,7 +409,6 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
           );
         } else if (msg.type === "done") {
           es.close();
-          // Final REST reload to ensure consistency after stream closes.
           load();
         }
       } catch {
@@ -221,7 +418,6 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
 
     es.onerror = () => {
       es.close();
-      // SSE failed — fall back to 3 s polling while the run is active.
       const interval = setInterval(() => {
         load().then(() => {
           setRun((r) => {
@@ -252,6 +448,7 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
   if (!run) return <div className={styles.loading}>Loading…</div>;
 
   const isActive = ACTIVE_STATUSES.has(run.status);
+  const completedTasks = tasks.filter((t) => t.status === "completed").length;
 
   return (
     <div className={styles.page}>
@@ -274,11 +471,22 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
         </div>
       </header>
 
-      {/* ── Synthesis summary ─────────────────────────────────────────────── */}
+      {isActive && (
+        <div className={styles.liveBar}>
+          <span className={styles.liveDot} />
+          Agent is running
+          {tasks.length > 0 && ` · ${completedTasks} of ${tasks.length} tasks done`}
+        </div>
+      )}
+
+      {/* ── Answer / Summary ──────────────────────────────────────────────── */}
       {run.summary && (
-        <div className={styles.summaryBanner}>
-          <span className={styles.summaryLabel}>🎯 Summary</span>
-          <p className={styles.summaryText}>{run.summary}</p>
+        <div className={styles.answerSection}>
+          <div className={styles.answerHeader}>
+            <span className={styles.answerIcon}>✦</span>
+            <span className={styles.answerTitle}>Answer</span>
+          </div>
+          <SummaryBody text={run.summary} />
         </div>
       )}
 
@@ -289,9 +497,9 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
             className={`${styles.tab} ${tab === t ? styles.tabActive : ""}`}
             onClick={() => setTab(t)}
           >
-            {t === "events" && `Timeline (${events.length})`}
+            {t === "events" && `Activity (${events.length})`}
             {t === "tasks" && `Tasks (${tasks.length})`}
-            {t === "artifacts" && `Evidence (${artifacts.length})`}
+            {t === "artifacts" && `Files (${artifacts.length})`}
           </button>
         ))}
       </nav>
@@ -299,30 +507,53 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
       <main className={styles.main}>
         {tab === "tasks" && (
           <div className={styles.taskList}>
+            {tasks.length > 0 && (
+              <div className={styles.progressHeader}>
+                <div className={styles.progressLabel}>
+                  {completedTasks} of {tasks.length} tasks completed
+                </div>
+                <div className={styles.progressTrack}>
+                  <div
+                    className={styles.progressFill}
+                    style={{
+                      width: `${(completedTasks / tasks.length) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             {tasks.length === 0 && (
               <p className={styles.empty}>No tasks yet — plan is being created…</p>
             )}
-            {tasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
+            {tasks.map((task, i) => (
+              <TaskCard key={task.id} task={task} index={i} />
             ))}
           </div>
         )}
 
         {tab === "events" && (
-          <div className={styles.eventList}>
+          <div className={styles.timelineList}>
             {events.length === 0 && (
-              <p className={styles.empty}>No events yet…</p>
+              <p className={styles.empty}>
+                {isActive ? "Waiting for first event…" : "No events recorded."}
+              </p>
             )}
             {events.map((ev) => (
               <EventRow key={ev.id} event={ev} />
             ))}
+            {isActive && events.length > 0 && (
+              <div className={styles.timelineLive}>
+                <span className={styles.timelineLiveDot} />
+                Agent is working…
+              </div>
+            )}
           </div>
         )}
 
         {tab === "artifacts" && (
           <div className={styles.artifactList}>
             {artifacts.length === 0 && (
-              <p className={styles.empty}>No artifacts yet.</p>
+              <p className={styles.empty}>No files generated yet.</p>
             )}
             {artifacts.map((a) => (
               <ArtifactRow key={a.id} artifact={a} runId={runId} />
@@ -333,3 +564,4 @@ export default function RunPage({ params }: { params: Promise<{ id: string }> })
     </div>
   );
 }
+
