@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.orchestrator import Orchestrator
+from backend.agents.cooperative_orchestrator import CooperativeOrchestrator
 from backend.config import get_config
 from backend.models.db import Artifact, Event, EventKind, Run, RunStatus, Task, TaskStatus
 from backend.models.database import get_session_factory
@@ -184,7 +185,11 @@ async def create_run(body: CreateRunRequest, db: AsyncSession = Depends(get_db))
                 bg_run = await bg_session.get(Run, run_id)
                 if bg_run is None:
                     return
-                orch = Orchestrator(bg_session, tool_bus, run_models=_run_models)
+                cfg = get_config()
+                if cfg.cooperative.enabled:
+                    orch = CooperativeOrchestrator(bg_session, tool_bus, run_models=_run_models)
+                else:
+                    orch = Orchestrator(bg_session, tool_bus, run_models=_run_models)
                 await orch.run(bg_run)
 
     task = asyncio.create_task(_run_background())

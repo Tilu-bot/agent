@@ -42,6 +42,11 @@ class EventKind(str, Enum):
     error = "error"
     critic = "critic"
     thinking = "thinking"
+    # Cooperative multi-agent events
+    agent_bid = "agent_bid"          # result of a task auction
+    help_request = "help_request"    # agent asked for help from peers
+    help_response = "help_response"  # another agent responded to a help request
+    knowledge_share = "knowledge_share"  # agent shared a discovered fact
 
 
 class Run(Base):

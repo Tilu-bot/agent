@@ -144,6 +144,28 @@ class SynthesisConfig(BaseModel):
     enabled: bool = True
 
 
+class CooperativeConfig(BaseModel):
+    """Cooperative multi-agent execution mode.
+
+    When enabled, task assignment switches from fixed role-based routing to a
+    **task auction**: every discovered agent bids on each task based on its
+    model's capabilities, and the highest bidder executes it.
+
+    Agents can also broadcast help-requests mid-task, and other agents respond
+    via the shared :class:`~backend.agents.message_bus.MessageBus`.  Facts
+    discovered during a task are written to a per-run
+    :class:`~backend.agents.knowledge.KnowledgeStore` and are immediately
+    visible to all other concurrent agents.
+    """
+
+    enabled: bool = True
+    # How long (seconds) to wait for a peer help-response before giving up.
+    help_timeout_seconds: float = 15.0
+    # Minimum bid score to claim a task; tasks below this threshold fall back
+    # to the general "fast" model.
+    min_bid_score: int = 20
+
+
 class AppConfig(BaseModel):
     models: ModelsConfig = ModelsConfig()
     llm: LLMConfig = LLMConfig()
@@ -157,6 +179,7 @@ class AppConfig(BaseModel):
     reflexion: ReflexionConfig = ReflexionConfig()
     synthesis: SynthesisConfig = SynthesisConfig()
     critic: CriticConfig = CriticConfig()
+    cooperative: CooperativeConfig = CooperativeConfig()
 
 
 @lru_cache

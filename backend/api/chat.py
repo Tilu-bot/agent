@@ -152,6 +152,33 @@ class ChatRequest(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_REASON_PREFIX_LEN = 30  # characters of the message shown in the classify reason string
+
+
+def _classify_reason(message: str, mode: str) -> str:
+    """Return a short human-readable explanation for why *mode* was chosen."""
+    msg = message.strip()
+    if not msg:
+        return "Empty message."
+    if mode == "agentic":
+        m = _AGENTIC_RE.search(msg)
+        if m:
+            # m.group(0) is always a substring captured by our own pre-defined
+            # keyword regex, never arbitrary user input, so interpolation is safe.
+            keyword = m.group(0)
+            return f"Detected agentic keyword: \"{keyword}\". Using agent pipeline."
+        if len(msg.split()) > 40:
+            return "Long multi-sentence request. Using agent pipeline for structured planning."
+        return "Request pattern suggests multi-step execution. Using agent pipeline."
+    # direct
+    if len(msg) <= 60:
+        return "Short conversational message. Answering directly."
+    m = _DIRECT_RE.match(msg)
+    if m:
+        prefix = msg[:_REASON_PREFIX_LEN]
+        return f"Conversational prefix detected (\"{prefix}…\"). Answering directly."
+    return "No agentic signals found. Answering directly."
+
 def _build_router(model: str | None) -> ModelRouter:
     """Return a ModelRouter, optionally pinning every slot to *model*."""
     if model:
@@ -182,6 +209,9 @@ async def chat_stream(body: ChatRequest) -> StreamingResponse:
     task_type = body.task_type
 
     async def event_stream():
+        # Emit model-info first so the UI can show which model is thinking.
+        model_name = mr.select_model(task_type)
+        yield f"data: {json.dumps({'type': 'model_info', 'model': model_name, 'task_type': task_type})}\n\n"
         try:
             async for token in mr.chat_stream(task_type, messages):
                 yield f"data: {json.dumps({'token': token})}\n\n"
@@ -215,4 +245,5 @@ async def classify_chat(body: ClassifyRequest) -> dict[str, str]:
         "",
     )
     mode = _classify_message(last_user)
-    return {"mode": mode}
+    reason = _classify_reason(last_user, mode)
+    return {"mode": mode, "reason": reason}
